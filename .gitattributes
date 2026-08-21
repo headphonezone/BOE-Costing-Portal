@@ -1,0 +1,14 @@
+# Normalise to LF in the repository. Windows editors handle LF fine, and this
+# stops every file showing as modified when the repo is used on another OS.
+* text=auto eol=lf
+
+# Shell scripts must keep LF or they will not run under bash.
+*.sh text eol=lf
+
+# Binary: never touch these.
+*.pdf  binary
+*.ico  binary
+*.png  binary
+*.jpg  binary
+*.woff binary
+*.woff2 binary

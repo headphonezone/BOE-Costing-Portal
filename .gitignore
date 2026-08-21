@@ -1,0 +1,31 @@
+# ---- frontend ----
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+frontend/.vercel
+
+# ---- backend ----
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- secrets: never commit ----
+.env
+.env.local
+.env*.local
+backend/.env
+frontend/.env.local
+
+# ---- misc ----
+.DS_Store
+coverage/
+
+# ---- sample documents ----
+# Real Bills of Entry are commercial records: importer address, IEC, GSTIN,
+# supplier, unit prices, duty. Keep them local, never in the repository.
+samples/*
+!samples/README.md

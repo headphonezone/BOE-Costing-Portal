@@ -271,6 +271,56 @@ describe("actual costing", () => {
   });
 });
 
+/**
+ * The same BOE can be costed two ways: here, and by the Excel workbook that
+ * `GET /boe/{be_no}/excel` serves from the C-SHEET template. Both are shown
+ * to the same user from the same page, so they have to agree.
+ *
+ * These evaluate the workbook's own formulas by hand and check this engine
+ * lands on the same numbers. The pool is the part that drifted: the template
+ * shipped with `I9 = I8+I7+I6+I5`, leaving out misc charges (K5) and the
+ * supplier freight / bank charges / own bank charges in K6:K8 -- captured on
+ * the sheet, then dropped from cost per piece.
+ */
+describe("C-SHEET parity", () => {
+  // I5 + I6 + I7 + I8 + K5 + K6 + K7 + K8
+  const POOL = 5000 + 500 + 1000 + 0 + 500 + 1000 + 500 + 500;
+
+  // F = D * $D$5 * C -- rate x exchange rate x qty
+  const F = items.map((i) => i.unit_price_usd! * 100 * i.qty!);
+  const SUM_F = F.reduce((a, b) => a + b, 0);
+
+  it("apportions the pool the workbook's I9 now sums", () => {
+    expect(POOL).toBe(9000);
+    expect(actualInputs().expenses.total).toBe(POOL);
+  });
+
+  it("matches the workbook's cost per piece on every row", () => {
+    // I = (F + G + H) / C, where H = $I$9 / $F$total * F and G = BCD + SWS
+    const expected = items.map((item, n) => {
+      const H = (POOL / SUM_F) * F[n];
+      const G = item.bcd! + item.sws!;
+      return (F[n] + G + H) / item.qty!;
+    });
+
+    actual().rows.forEach((row, n) => {
+      expect(row.costPerPiece).toBeCloseTo(expected[n], 9);
+    });
+  });
+
+  it("matches the workbook's assessable value column (O = F + L + M + N)", () => {
+    const { freight, misc, insurance } = actualInputs().expenses;
+    const expected = items.map((_, n) => {
+      const share = F[n] / SUM_F;
+      return F[n] + freight * share + misc * share + insurance * share;
+    });
+
+    actual().rows.forEach((row, n) => {
+      expect(row.assessValueCalc).toBeCloseTo(expected[n], 9);
+    });
+  });
+});
+
 describe("scenario inheritance", () => {
   it("reproduces the actual costing when nothing is changed", () => {
     const sim = simulate(scenario({ duty_mode: "locked" }));
@@ -495,6 +545,34 @@ describe("freight modelling", () => {
         freight_total_inr: 38161,
       })
     ).toBe(38161);
+  });
+
+  // Picking a basis is not a freight figure. Before this was pinned down,
+  // selecting "Per kg" and typing nothing dropped the actual freight out of
+  // the pool entirely, while the control still offered it as the placeholder.
+  it("inherits the actual freight when only the basis has been picked", () => {
+    const s = scenario({ freight_basis: "PER_KG" });
+    expect(resolveScenarioInputs(boe, variableFields, s).expenses.freight).toBe(5000);
+  });
+
+  it("inherits the actual freight when the calculator is only half filled in", () => {
+    const s = scenario({ freight_basis: "PER_KG", freight_rate: 450 });
+    expect(resolveScenarioInputs(boe, variableFields, s).expenses.freight).toBe(5000);
+  });
+
+  it("lets a typed zero mean zero rather than inheriting", () => {
+    const s = scenario({ freight_total_inr: 0 });
+    expect(resolveScenarioInputs(boe, variableFields, s).expenses.freight).toBe(0);
+  });
+
+  it("prefers a completed calculator over the typed total", () => {
+    const s = scenario({
+      freight_basis: "PER_KG",
+      freight_rate: 100,
+      freight_quantity: 30,
+      freight_total_inr: 38161,
+    });
+    expect(resolveScenarioInputs(boe, variableFields, s).expenses.freight).toBe(3000);
   });
 
   it("re-apportions a changed freight charge across items by value share", () => {

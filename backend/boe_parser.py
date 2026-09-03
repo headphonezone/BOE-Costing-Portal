@@ -1236,6 +1236,51 @@ def get_template_bytes() -> bytes:
 # PDF PARSERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+# The "ASSESSED COPY" watermark is printed diagonally across every page at
+# roughly 50pt, against 8pt body text. It is the single largest source of
+# corruption in this form, and it corrupts in three different ways: a glyph
+# lands on a line of its own ("S" between two description lines), it lands
+# beside real text (" Y" after the importer name), or -- worst -- it lands
+# flush against a real token and fuses with it, turning "Charger 5A" into
+# "Charger 5AE" and a licence number into "2607E000174".
+#
+# Only the third kind is unfixable downstream: once the characters are one
+# token, no amount of text matching can tell a bled letter from a real one
+# without a spelling blacklist. But the watermark glyphs are six times the
+# size of body text, so they are trivially separable BEFORE the characters
+# are ever assembled into words. Dropping them here means no parser below
+# has to guess which letters are real.
+# The form sets all of its content between 7pt (the barcode strip) and 14pt
+# (the "INDIAN CUSTOMS" masthead); body text is 8pt. Anything outside that
+# band is decoration that still lands in the text layer:
+#
+#   ~51-57pt  the diagonal "ASSESSED COPY" watermark
+#   2.2-6.9pt the section labels printed sideways down the margins, which
+#             come through as single stacked characters ("T", "E.E", "D", ...)
+#
+# Both bleed into descriptions. The sideways labels used to be swept up by a
+# regex that deleted every lone capital, which also deleted real ones -- see
+# the note in parse_page2.
+BODY_MIN_SIZE = 7.0
+BODY_MAX_SIZE = 20.0
+
+
+def strip_watermark(page):
+    """The page with watermark and sideways-margin glyphs removed."""
+    return page.filter(
+        lambda obj: obj.get('object_type') != 'char'
+        or BODY_MIN_SIZE <= (obj.get('size') or 0) <= BODY_MAX_SIZE
+    )
+
+
+def extract_clean_text(page) -> str:
+    """
+    Page text with watermark bleed removed. Every text-based parser below
+    expects to be fed from here rather than from page.extract_text().
+    """
+    return strip_watermark(page).extract_text() or ''
+
+
 def get_row_words(page, min_x: float = 60) -> dict:
     """
     FIX: rows were previously bucketed by round(w['top']) (nearest whole
@@ -1251,7 +1296,7 @@ def get_row_words(page, min_x: float = 60) -> dict:
     floating-point noise, e.g. <0.05) while no longer coalescing distinct
     rows that happen to straddle a whole-integer boundary.
     """
-    words = page.extract_words()
+    words = strip_watermark(page).extract_words()
     rows = defaultdict(list)
     for w in words:
         if w['x0'] > min_x:
@@ -1295,6 +1340,34 @@ def parse_header(page1_text: str) -> dict:
     return info
 
 
+def parse_exchange_rates(page1_text: str) -> dict:
+    """
+    Every exchange rate the BOE states, as {currency: INR per unit}.
+
+    Part I section H prints one line per currency in play, e.g. "INR=INR" and
+    "1 USD=96.05INR". A BOE can quote its invoice, freight and insurance in
+    different currencies, so a single rate is not enough to read the form --
+    see parse_page2.
+    """
+    rates = {'INR': 1.0}
+    for cur, rate in re.findall(r'1\s*([A-Z]{3})\s*=\s*([\d.]+)\s*INR', page1_text):
+        rates[cur] = float(rate)
+    return rates
+
+
+def _to_inr(amount: float, currency: str | None, rates: dict) -> float:
+    """
+    Converts a declared amount to INR. An unknown currency is returned
+    untouched rather than multiplied by a guessed rate -- a figure that is
+    obviously in the wrong unit is recoverable; one silently scaled by the
+    wrong rate is not.
+    """
+    if not currency or currency == 'INR':
+        return amount
+    rate = rates.get(currency)
+    return round(amount * rate, 2) if rate else amount
+
+
 def parse_hawb(page1_text: str) -> str:
     """
     FIX: HAWB numbers can be alphanumeric (e.g. "HKAE26075428") rather than
@@ -1329,6 +1402,27 @@ def parse_hawb(page1_text: str) -> str:
             return m.group(1)
 
     return "N/A"
+
+
+def parse_importer(page1_text: str) -> str:
+    """
+    Part I, "1.IMPORTER NAME & ADDRESS". The name is the first line of that
+    block; the remaining lines are the address, which nothing downstream
+    stores.
+
+    This was never written at all -- save_boe() read `importer_name` from a
+    key no parser ever set -- so the field was null on every record saved.
+    """
+    m = re.search(
+        r'1\.\s*IMPORTER\s+NAME\s*&\s*ADDRESS\s*\n\s*([^\n]+)',
+        page1_text, re.IGNORECASE
+    )
+    if not m:
+        return ""
+    # Belt and braces: extract_clean_text already drops watermark glyphs, but
+    # a trailing lone capital is the signature of one that survived, and it is
+    # never part of a company name.
+    return re.sub(r'\s+[A-Z]$', '', m.group(1)).strip()
 
 
 def parse_supplier(page2_text: str) -> str:
@@ -1449,7 +1543,7 @@ def group_pages_by_invoice(pages_text: list) -> list:
     return blocks
 
 
-def parse_page2(page2_text: str, exchange_rate: float) -> tuple[dict, list[dict]]:
+def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None) -> tuple[dict, list[dict]]:
     """
     Parses ONE invoice block's text: header meta (invoice no/date, valuation,
     misc charges) plus its item table.
@@ -1479,9 +1573,36 @@ def parse_page2(page2_text: str, exchange_rate: float) -> tuple[dict, list[dict]
     # freight/insurance/inv_value were silently left unset.
     m = re.search(r'([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+DP', page2_text)
     if m:
-        meta['inv_value'] = float(m.group(1))
-        meta['freight'] = float(m.group(2))
-        meta['insurance'] = float(m.group(3))
+        inv_value = float(m.group(1))
+        freight = float(m.group(2))
+        insurance = float(m.group(3))
+
+        # FIX: those three figures are NOT all in INR, and which ones are
+        # varies by BOE. The row underneath them, "14.Cur", names the currency
+        # of each in the same order:
+        #
+        #     43091.68  636.82  4588   DP  Rule 4 - Transaction Value
+        #     14.Cur    USD     USD    INR
+        #
+        # Freight was read as INR whatever that row said. On a BOE quoting it
+        # in USD that understates freight by the whole exchange rate -- on BE
+        # 3168452 it turned USD 636.82 of freight into 636.82 rupees, dropping
+        # 60,530 rupees out of the expense pool of a 4.2M consignment and
+        # under-costing all 38 items. It went unnoticed because the previous
+        # sample BOE happened to quote freight in INR.
+        #
+        # inv_value keeps its own currency: it lands in boes.inv_value_usd,
+        # which is the invoice figure as invoiced. freight and insurance are
+        # stored as INR columns, so they are converted here.
+        cur = re.search(r'14\.Cur\s+([A-Z]{3})\s+([A-Z]{3})\s+([A-Z]{3})', page2_text)
+        if cur:
+            rate_table = rates or {'INR': 1.0, 'USD': exchange_rate}
+            freight = _to_inr(freight, cur.group(2), rate_table)
+            insurance = _to_inr(insurance, cur.group(3), rate_table)
+
+        meta['inv_value'] = inv_value
+        meta['freight'] = freight
+        meta['insurance'] = insurance
 
     # FIX: verified against real pdfplumber output — the "13.MISC CHARGE
     # 14.ASS. VALUE" label line is immediately followed by its own value
@@ -1519,8 +1640,13 @@ def parse_page2(page2_text: str, exchange_rate: float) -> tuple[dict, list[dict]
     )
     for m in item_pat.finditer(page2_text):
         sno = int(m.group(1))
-        raw = re.sub(r'\s+', ' ', m.group(2)).strip()
-        desc = re.sub(r'\b[A-Z]\b\s*', '', raw).strip()
+        desc = re.sub(r'\s+', ' ', m.group(2)).strip()
+        # NOTE: a lone capital used to be stripped here as watermark bleed.
+        # strip_watermark() now removes bleed by character size, before words
+        # are ever formed, and stripping lone capitals destroys real ones: it
+        # turned "Type C - Mic" into "Type - Mic" and "Type-C Cable" into
+        # "Type-Cable", collapsing the Type-C and 3.5mm variants of the same
+        # earphone into identical descriptions.
         for _b, _g in [('ACCESSORIESC', 'ACCESSORIES'), ('ACCOESSORIES', 'ACCESSORIES'),
                        ('HEADPHYONE', 'HEADPHONE'), ('BLYACK', 'BLACK')]:
             desc = desc.replace(_b, _g)
@@ -1553,13 +1679,17 @@ def parse_page2(page2_text: str, exchange_rate: float) -> tuple[dict, list[dict]
                     # invoice valuation summary line (inv_value/freight/
                     # insurance ... DP) that follows the item table -- never
                     # part of a description.
-                    or re.match(r'^[\d.]+\s+[\d.]+\s+[\d.]+\s+DP\b', line)):
+                    or re.match(r'^[\d.]+\s+[\d.]+\s+[\d.]+\s+DP\b', line)
+                    # page furniture. The last item on a page has no next-item
+                    # line to stop at, so without these the footer ran straight
+                    # into its description ("Playmate 2 Remote Page 2 Of 7").
+                    or re.match(r'^Page\s+\d+\s+Of\s+\d+\b', line, re.IGNORECASE)
+                    or 'ICETRAK' in line):
                 break
             tail_lines.append(line)
             started = True
         if tail_lines:
             combined = re.sub(r'\s+', ' ', desc + ' ' + ' '.join(tail_lines)).strip()
-            combined = re.sub(r'\b[A-Z]\b\s*', '', combined).strip()
             for _b, _g in [('ACCESSORIESC', 'ACCESSORIES'), ('ACCOESSORIES', 'ACCESSORIES'),
                            ('HEADPHYONE', 'HEADPHONE'), ('BLYACK', 'BLACK')]:
                 combined = combined.replace(_b, _g)
@@ -1570,7 +1700,7 @@ def parse_page2(page2_text: str, exchange_rate: float) -> tuple[dict, list[dict]
     return meta, items
 
 
-def parse_all_items(pages_text_after_p1: list, exchange_rate: float):
+def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict | None = None):
     """
     Groups pages by invoice, parses each invoice block's items, and assigns
     a single running `global_sno` across all invoices (used for Excel row
@@ -1587,7 +1717,7 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float):
 
     for invidx, pages in blocks:
         block_text = '\n'.join(pages)
-        meta, items = parse_page2(block_text, exchange_rate)
+        meta, items = parse_page2(block_text, exchange_rate, rates)
         meta['supplier'] = parse_supplier(block_text)
         per_invoice_meta[invidx] = (meta, len(items))
 
@@ -1609,6 +1739,11 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float):
         primary_meta = {}
 
     return primary_meta, all_items
+
+
+# Unit-of-quantity codes as they appear in the item and Part III tables. A row
+# carrying one of these is a quantity row.
+_UQC_CODES = frozenset({'PCS', 'SET', 'NOS', 'UNT', 'KGS', 'MTR', 'LTR', 'SQM', 'CBM', 'GMS', 'TON', 'DOZ'})
 
 
 def extract_assess_values_from_pages(pdf_pages) -> dict:
@@ -1646,6 +1781,17 @@ def extract_assess_values_from_pages(pdf_pages) -> dict:
                 y2 = sorted_ys[j]
                 words2 = row_words[y2]
                 texts2 = [t for _, t in words2]
+
+                # FIX: the quantity row can satisfy the "two big numbers"
+                # test too. An item declared "250 PCS 250 NOS" puts two
+                # 3-digit numbers on it, and being the earlier row it won
+                # -- so eight items on BE 3168452 recorded their QUANTITY as
+                # their assessable value. Skip any row carrying a unit code:
+                # that is what makes it a quantity row, and 29.ASSESS VALUE
+                # never sits on one.
+                if any(t in _UQC_CODES for t in texts2):
+                    continue
+
                 nums = [t for t in texts2 if re.match(r'^\d{3,}\.?\d*$', t)]
                 if len(nums) >= 2:
                     try:
@@ -1710,39 +1856,86 @@ def extract_duties_from_page(page) -> dict:
     return duties
 
 
-def parse_scheme_g(page) -> dict:
-    """
-    FIX (Bug 6, generalized): the previous version only recognized rows
-    whose scheme name was literally "ROSCTL", which broke on BOEs using a
-    different export-incentive scheme (e.g. "RODTEP" in this HK Jade BOE —
-    same column layout, different scheme name). Instead of matching a
-    specific scheme name string, this now recognizes the row by its column
-    *shape*: invsno/itmsno numbers in their fixed positions, some uppercase
-    alphabetic scheme-name token (whatever it is) in the scheme-name
-    column, and a numeric BCD-forgone value in its column. This works for
-    any scheme name and, like before, scans every page rather than gating
-    on the section header text (continuation pages don't repeat it).
+# "G. SCHEME NOTIFICATION AND DUTY FOREGONE DETAILS" -- the section that
+# carries BCD foregone under a licence.
+_SCHEME_G_HEADER = re.compile(r'G\.\s*SCHEME\s+NOTIFICATION\s+AND\s+DUTY\s+FOREGONE', re.IGNORECASE)
 
-    Returns a dict keyed by (invsno, itemsn) -> bcd_amt_forgone (float).
+# Any other lettered section header ("H. CERTIFICATE DETAILS", "O. INVOICE
+# DETAILS"), which is where Section G ends. The column-header row underneath
+# a section starts "1.INVSNO...", so it never matches this.
+_SECTION_HEADER = re.compile(r'^[A-Z]\.\s*[A-Z]')
+
+# Height of the repeated masthead (Port Code / BE No / GSTIN / BILL OF ENTRY).
+# Only used to re-enter a Section G that spilled onto a following page.
+_MASTHEAD_BOTTOM = 95.0
+
+
+def parse_scheme_g_from_pages(pdf_pages) -> dict:
+    """
+    Part IV Section G: BCD foregone under a licence, keyed by
+    (invsno, itemsn).
+
+    Rows are recognized by their column *shape* rather than by scheme name --
+    invsno/itmsno in their fixed positions, an uppercase scheme-name token,
+    and a numeric amount in the BCD-AMT-FG column -- because the scheme
+    varies by BOE (ROSCTL, RODTEP, ...) and hardcoding one breaks the others.
+
+    FIX: that shape is not unique to Section G, and this used to scan every
+    page of the document looking for it. A Part III item row matches it
+    exactly -- invsno and itmsno in the same columns, "NOEXCISE" standing in
+    for the scheme name, and any number in the description landing in the
+    amount column. On the sample BOE that fabricated a BCD-foregone of 2.0
+    for item 1 out of the "02" in "Silent Power 02 Power Modules", on a
+    document whose Section G is empty.
+
+    Harmless while cash BCD is non-zero, since deriveDutyRates() prefers it.
+    On a licence-paid BOE -- the only kind where Section G matters -- it
+    would have written a description fragment in as the real BCD.
+
+    So the shape match is now confined to the Section G band: from its
+    header down to the next lettered section. The band is tracked across
+    pages, because a section that spills over does not repeat its header.
     """
     result = {}
-    row_words = get_row_words(page, min_x=0)
+    in_section = False
 
-    for y in sorted(row_words.keys()):
-        words = row_words[y]
-        invsno = itmsno = bcd_fg = scheme_name = None
-        for x, t in words:
-            if 70 <= x <= 90 and re.match(r'^\d+$', t):
-                invsno = int(t)
-            elif 105 <= x <= 130 and re.match(r'^\d+$', t):
-                itmsno = int(t)
-            elif 190 <= x <= 235 and t.isalpha() and t.isupper() and len(t) >= 3:
-                scheme_name = t
-            elif 440 <= x <= 505 and re.match(r'^[\d.]+$', t):
-                bcd_fg = float(t)
+    for page in pdf_pages:
+        row_words = get_row_words(page, min_x=0)
+        sorted_ys = sorted(row_words.keys())
 
-        if invsno is not None and itmsno is not None and bcd_fg is not None and scheme_name:
-            result[(invsno, itmsno)] = bcd_fg
+        # Where does the band open on this page, and where does it close?
+        start_y = _MASTHEAD_BOTTOM if in_section else None
+        end_y = None
+        for y in sorted_ys:
+            line = ' '.join(t for _, t in row_words[y])
+            if _SCHEME_G_HEADER.search(line):
+                start_y, end_y = y, None
+                in_section = True
+                continue
+            if in_section and start_y is not None and y > start_y and _SECTION_HEADER.match(line):
+                end_y = y
+                in_section = False
+                break
+
+        if start_y is None:
+            continue
+
+        for y in sorted_ys:
+            if y <= start_y or (end_y is not None and y >= end_y):
+                continue
+            invsno = itmsno = bcd_fg = scheme_name = None
+            for x, t in row_words[y]:
+                if 70 <= x <= 90 and re.match(r'^\d+$', t):
+                    invsno = int(t)
+                elif 105 <= x <= 130 and re.match(r'^\d+$', t):
+                    itmsno = int(t)
+                elif 190 <= x <= 235 and t.isalpha() and t.isupper() and len(t) >= 3:
+                    scheme_name = t
+                elif 440 <= x <= 505 and re.match(r'^[\d.]+$', t):
+                    bcd_fg = float(t)
+
+            if invsno is not None and itmsno is not None and bcd_fg is not None and scheme_name:
+                result[(invsno, itmsno)] = bcd_fg
 
     return result
 
@@ -1863,21 +2056,42 @@ def format_date(raw: str) -> str:
 
 def fill_excel(header: dict, meta: dict, items: list, duties: dict,
                 bcd_forgone: dict, licences: list, assess_values: dict = None,
-                variable_fields: dict = None) -> bytes:
+                variable_fields: dict = None, options: dict = None) -> bytes:
+    """
+    Renders the C-SHEET / D-DETAILS workbook.
+
+    `options` carries the few things a simulation needs that an actual BOE
+    never does. Absent, this behaves exactly as it always has:
+
+      title          a banner naming the scenario, so a simulated workbook
+                     can never be mistaken for the actual record
+      margin_pct     the scenario's margin (an actual is always 2%)
+      other_charges  I8, which an actual BOE has no field for
+      foc_keys       (invsno, itemsn) of free-of-cost items, whose goods
+                     value is excluded from cost per piece
+    """
     wb = load_workbook(io.BytesIO(get_template_bytes()))
-    _fill_c_sheet(wb, header, meta, items, duties, assess_values or {}, variable_fields or {})
+    _fill_c_sheet(wb, header, meta, items, duties, assess_values or {},
+                  variable_fields or {}, options or {})
     _fill_d_details(wb, items, duties, bcd_forgone, licences)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
 
 
-def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_fields):
+def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_fields,
+                  options=None):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
     cs = wb['C-SHEET']
     n = len(items)
     exchange_rate = header.get('exchange_rate', 1.0)
+
+    options = options or {}
+    margin_pct = options.get('margin_pct', 2.0)
+    foc_keys = set(options.get('foc_keys') or ())
+    other_charges = options.get('other_charges', 0.0)
+    title = options.get('title')
 
     def _s(style='thin'): return Side(style=style, color='000000')
     def _ab(): s = _s(); return Border(left=s, right=s, top=s, bottom=s)
@@ -1966,6 +2180,16 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     cs['I7'].value = _var_value('clearing_charges', 0)
     _st(cs['I7'], font=BLK_BOLD, fill=_status_fill('clearing_charges'), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
+    # I8 (OTHERS) is left at the template's 0 for an actual BOE, which has no
+    # field for it. A scenario does.
+    cs['I8'].value = other_charges
+
+    # Row 10 is blank in the template and nothing else writes to it, so it is
+    # a safe place to say, unmissably, that this is not the actual record.
+    if title:
+        cs['A10'].value = title
+        _st(cs['A10'], font=Font(name='Calibri', bold=True, color='9C0006', size=11), align=LEFT)
+
     j5 = cs['J5']
     j5.value = 'FREIGHT CHARGES - 2'
     _st(j5, font=WHT_BOLD, fill=NAVY_FILL, align=CENTER, border=_ab())
@@ -1990,6 +2214,24 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         kcell = cs.cell(row=row, column=11)  # column K
         kcell.value = _var_value(field_key, 0)
         _st(kcell, font=BLK_BOLD, fill=_status_fill(field_key), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
+
+    # FIX: the template computes the apportioned expense pool as
+    # I9 = I8+I7+I6+I5 -- freight, insurance, clearance, others -- which
+    # silently drops the four costs that live in column K: misc charges (K5,
+    # labelled "FREIGHT CHARGES - 2") and the supplier freight / bank charges
+    # / own bank charges written just above (K6:K8). All four were captured,
+    # displayed on the sheet, and then left out of cost per piece.
+    #
+    # frontend/src/lib/costing.ts apportions all eight, so leaving the
+    # template's formula alone meant this workbook and the portal screen that
+    # links to it reported different costs for the same BOE wherever any of
+    # those four was non-zero. Column H (and so cost per piece) now covers the
+    # same pool the portal does.
+    #
+    # This does not touch the assessable-value reconciliation in columns L-O,
+    # which apportions freight, misc and insurance individually and already
+    # agrees with the portal.
+    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8'
 
     for r in range(5, 11):
         cs.row_dimensions[r].height = 18
@@ -2050,10 +2292,20 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         c = cs.cell(row=row, column=8); c.value = f'=+$I$9/$F${total_row}*F{row}'
         _st(c, font=BLK_NORM, fill=PINK_FILL, align=RIGHT, num_fmt=NUM_FMT, border=_ab())
 
-        c = cs.cell(row=row, column=9); c.value = f'=(+F{row}+G{row}+H{row})/C{row}'
+        # Cost per piece. An FOC item is paid for by nobody, so its goods
+        # value drops out of cost -- but it stays in F, because the goods
+        # still shipped and still absorb their share of freight and duty.
+        # This mirrors payableInr in costing.ts.
+        c = cs.cell(row=row, column=9)
+        if (it['invsno'], it['itemsn']) in foc_keys:
+            c.value = f'=(+G{row}+H{row})/C{row}'
+        else:
+            c.value = f'=(+F{row}+G{row}+H{row})/C{row}'
         _st(c, font=BLK_NORM, fill=PINK_FILL, align=RIGHT, num_fmt=NUM_FMT, border=_ab())
 
-        c = cs.cell(row=row, column=10); c.value = f'=I{row}*102%'
+        # Selling price. The actual is always +2%; a scenario sets its own.
+        c = cs.cell(row=row, column=10)
+        c.value = f'=I{row}*{100 + margin_pct:g}%'
         _st(c, font=BLK_NORM, fill=PatternFill(fill_type=None), align=RIGHT, num_fmt=NUM_FMT, border=_ab())
 
         c = cs.cell(row=row, column=11); c.value = f'=C{row}*J{row}'

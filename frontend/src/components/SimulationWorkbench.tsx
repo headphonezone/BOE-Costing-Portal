@@ -12,6 +12,7 @@ import {
   type CostingResult,
   type CostRow,
 } from "@/lib/costing";
+import { downloadSimulationExcel } from "@/lib/export";
 import { inr, pct } from "@/lib/format";
 import {
   createScenario,
@@ -53,6 +54,20 @@ export function SimulationWorkbench({
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The scenario controls are a workbench, not a permanent fixture. They open
+   * while a scenario is being set up and fold away once it is saved, because
+   * the 300px they occupy is exactly what pushed the item table into
+   * horizontal scrolling -- the columns you need to read are the ones that
+   * fell off the right edge.
+   */
+  const [editing, setEditing] = useState(false);
+
+  /** Switching scenarios shows the saved result, not the editor. */
+  function selectScenario(id: string) {
+    setActiveId(id);
+    setEditing(false);
+  }
 
   const actualInputs = useMemo(
     () => resolveActualInputs(boe, variableFields),
@@ -209,6 +224,7 @@ export function SimulationWorkbench({
       const created = await createScenario(boe.be_no, nextScenarioName(scenarios));
       setScenarios((prev) => [...prev, created]);
       setActiveId(created.id);
+      setEditing(true);
     });
   }
 
@@ -218,6 +234,7 @@ export function SimulationWorkbench({
       const copy = await duplicateScenario(active, nextScenarioName(scenarios));
       setScenarios((prev) => [...prev, copy]);
       setActiveId(copy.id);
+      setEditing(true);
     });
   }
 
@@ -259,6 +276,7 @@ export function SimulationWorkbench({
         next.delete(active.id);
         return next;
       });
+      setEditing(false);
     });
   }
 
@@ -270,6 +288,7 @@ export function SimulationWorkbench({
       const remaining = scenarios.filter((s) => s.id !== active.id);
       setScenarios(remaining);
       setActiveId(remaining[0]?.id ?? null);
+      setEditing(false);
     });
   }
 
@@ -289,7 +308,7 @@ export function SimulationWorkbench({
           <button
             key={s.id}
             type="button"
-            onClick={() => setActiveId(s.id)}
+            onClick={() => selectScenario(s.id)}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
               s.id === activeId
                 ? "bg-blue-600 text-white"
@@ -336,30 +355,57 @@ export function SimulationWorkbench({
             </div>
           )}
 
-          <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
-            <aside className="lg:sticky lg:top-6 lg:self-start">
-              <div className="rounded-xl border border-line bg-surface p-4">
-                <ScenarioControls
-                  scenario={active}
-                  actualInputs={actualInputs}
-                  onChange={patchScenario}
-                />
-                <div className="mt-6 flex flex-wrap gap-2 border-t border-line pt-4">
+          {/* Toolbar. Every action for the active scenario lives here, at a
+              fixed place at the top, rather than moving with the panel that
+              folds away underneath it. */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-base font-semibold">{active.name}</h2>
+                {isDirty && (
+                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/50 dark:text-amber-300">
+                    unsaved
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 truncate text-xs text-muted">
+                {active.notes ||
+                  (editing
+                    ? "Adjust the inputs on the left; the tables update as you type."
+                    : "Saved. Choose Edit to change the inputs behind this costing.")}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {editing ? (
+                <>
                   <button
                     type="button"
                     onClick={handleSave}
                     disabled={busy || !isDirty}
-                    className="flex-1 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
                   >
-                    {isDirty ? "Save" : "Saved"}
+                    Save
                   </button>
                   <button
                     type="button"
-                    onClick={handleDuplicate}
+                    onClick={() => setEditing(false)}
                     disabled={busy}
                     className="rounded-lg border border-line px-3 py-2 text-sm transition hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800"
+                    title={isDirty ? "Hide the inputs. Unsaved changes are kept." : "Hide the inputs."}
                   >
-                    Duplicate
+                    Close inputs
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setEditing(true)}
+                    disabled={busy}
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    Edit
                   </button>
                   <button
                     type="button"
@@ -369,9 +415,42 @@ export function SimulationWorkbench({
                   >
                     Delete
                   </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={handleDuplicate}
+                disabled={busy}
+                className="rounded-lg border border-line px-3 py-2 text-sm transition hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800"
+              >
+                Duplicate
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  activeResult && run(() => downloadSimulationExcel(activeResult, boe))
+                }
+                disabled={busy || !activeResult}
+                className="rounded-lg border border-line px-3 py-2 text-sm transition hover:bg-slate-100 disabled:opacity-50 dark:hover:bg-slate-800"
+                title="This simulation as the C-SHEET workbook, the same format the actual record exports"
+              >
+                Download Excel
+              </button>
+            </div>
+          </div>
+
+          <div className={editing ? "grid gap-6 lg:grid-cols-[280px_1fr]" : ""}>
+            {editing && (
+              <aside className="lg:sticky lg:top-6 lg:self-start">
+                <div className="rounded-xl border border-line bg-surface p-4">
+                  <ScenarioControls
+                    scenario={active}
+                    actualInputs={actualInputs}
+                    onChange={patchScenario}
+                  />
                 </div>
-              </div>
-            </aside>
+              </aside>
+            )}
 
             <div className="min-w-0 space-y-8">
               <section>
@@ -442,7 +521,7 @@ export function SimulationWorkbench({
                       <td className="px-3 py-2">
                         <button
                           type="button"
-                          onClick={() => setActiveId(s.id)}
+                          onClick={() => selectScenario(s.id)}
                           className="font-medium hover:text-blue-600 hover:underline"
                         >
                           {s.name}

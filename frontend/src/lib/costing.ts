@@ -173,6 +173,34 @@ export function isFreightCalculated(basis: FreightBasis, rate: number | null, qt
 }
 
 /**
+ * A scenario's freight, in the order the controls imply it:
+ *
+ *   1. a fully filled-in rate x quantity calculator wins;
+ *   2. otherwise a typed total wins;
+ *   3. otherwise the actual freight is inherited, like every other input.
+ *
+ * Step 3 is why this exists rather than calling `resolveFreightTotal`
+ * directly. That function answers "what freight has this scenario set?", for
+ * which nothing set is legitimately zero. Inheritance is a different
+ * question, and picking the basis dropdown is not a freight figure: choosing
+ * "Per kg" before typing a rate must not silently drop the actual freight out
+ * of the pool while the control still shows it as the inherited placeholder.
+ */
+export function resolveScenarioFreight(
+  scenario: Pick<
+    Scenario,
+    "freight_basis" | "freight_rate" | "freight_quantity" | "freight_total_inr"
+  >,
+  inherited: number
+): number {
+  const { freight_basis, freight_rate, freight_quantity, freight_total_inr } = scenario;
+  if (isFreightCalculated(freight_basis, freight_rate, freight_quantity)) {
+    return freight_rate! * freight_quantity!;
+  }
+  return freight_total_inr ?? inherited;
+}
+
+/**
  * Resolves the actual (un-simulated) inputs for a BOE. Mirrors the fallback
  * order the existing spreadsheet filler uses: an operator-maintained variable
  * field wins over the parsed BOE value, which wins over zero.
@@ -213,10 +241,7 @@ export function resolveScenarioInputs(
   const actual = resolveActualInputs(boe, variableFields);
 
   const expenses = buildPool({
-    freight:
-      scenario.freight_total_inr == null && scenario.freight_basis === "LUMP_SUM"
-        ? actual.expenses.freight
-        : resolveFreightTotal(scenario),
+    freight: resolveScenarioFreight(scenario, actual.expenses.freight),
     insurance: scenario.insurance_inr ?? actual.expenses.insurance,
     clearance: scenario.clearance_inr ?? actual.expenses.clearance,
     otherCharges: scenario.other_charges_inr ?? actual.expenses.otherCharges,

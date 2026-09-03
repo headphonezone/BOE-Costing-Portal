@@ -56,7 +56,7 @@ def save_boe(header: dict, meta: dict, items: list, duties: dict,
     boe_row = {
         'be_no': be_no,
         'be_date': _to_iso_date(header.get('be_date')),
-        'importer_name': meta.get('importer_name'),
+        'importer_name': header.get('importer_name') or meta.get('importer_name'),
         'supplier_name': meta.get('supplier'),
         'inv_no': meta.get('inv_no'),
         'inv_date': _to_iso_date(meta.get('inv_date')),
@@ -110,7 +110,66 @@ def save_boe(header: dict, meta: dict, items: list, duties: dict,
     if lic_rows:
         _client.table('boe_licences').insert(lic_rows).execute()
 
+    # Re-uploading after a parser fix has to reach the figures the dashboard
+    # actually costs against, not just boes.*.
+    refresh_provisional_fields(
+        be_no,
+        exchange_rate=header.get('exchange_rate'),
+        freight_charges=meta.get('freight'),
+    )
+
     return be_no
+
+
+# The variable fields the parser itself derives from the BOE. The rest
+# (clearing charges, bank charges, ...) are only ever typed in by an operator,
+# so a re-parse has nothing to say about them.
+_PARSED_FIELDS = ('exchange_rate', 'freight_charges')
+
+
+def refresh_provisional_fields(be_no: str, exchange_rate=None, freight_charges=None) -> list:
+    """
+    Brings the operator-facing variable fields back in line with a fresh parse.
+
+    A field still marked 'provisional' holds whatever the parser last read and
+    nobody has confirmed it, so re-parsing the same BOE -- which is what
+    re-uploading after a parser fix is for -- should correct it. A field marked
+    'fixed' has been confirmed by a person against the real paperwork and is
+    never overwritten here.
+
+    Without this a parser fix could never reach a BOE that had already been
+    uploaded. resolveActualInputs() reads boe_variable_fields.freight_charges
+    in preference to boes.freight_inr, so a stale provisional figure shadows
+    the corrected parse permanently -- which is exactly what happened to BE
+    3168452, where a re-upload alone would have left the wrong freight in
+    place. Returns the field names actually changed.
+    """
+    existing = _client.table('boe_variable_fields').select('*').eq('be_no', be_no).limit(1).execute().data
+    if not existing:
+        # Nothing is shadowing the parsed values, so there is nothing to
+        # correct. Deliberately not creating a row: absence already means
+        # "use what the BOE says".
+        return []
+
+    row = existing[0]
+    incoming = {'exchange_rate': exchange_rate, 'freight_charges': freight_charges}
+    changed = []
+
+    for field in _PARSED_FIELDS:
+        value = incoming.get(field)
+        if value is None:
+            continue
+        if row.get(f'{field}_status') == 'fixed':
+            continue
+        old = row.get(field)
+        if old is not None and abs(float(old) - float(value)) < 0.005:
+            continue
+        # Goes through update_field so the change lands in boe_field_history
+        # like every other edit, rather than silently mutating the row.
+        update_field(be_no, field, float(value), 'provisional')
+        changed.append(field)
+
+    return changed
 
 
 def upload_document(be_no: str, file_name: str, file_bytes: bytes, doc_type: str = 'BOE') -> str:

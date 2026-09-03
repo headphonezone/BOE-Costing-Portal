@@ -57,6 +57,20 @@ export type BoeLicence = {
   debit_duty: number | null;
 };
 
+/**
+ * A file in the `boe-documents` storage bucket: the Bill of Entry PDF itself,
+ * or a supporting invoice / packing list / certificate of origin. Written by
+ * the parser service on upload; the portal only reads it.
+ */
+export type BoeDocument = {
+  id: number;
+  be_no: string;
+  doc_type: string | null;
+  file_name: string | null;
+  storage_path: string;
+  uploaded_at: string;
+};
+
 /** The six provisional/fixed cost fields the existing dashboard maintains. */
 export type BoeVariableFields = {
   be_no: string;

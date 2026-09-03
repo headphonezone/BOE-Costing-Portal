@@ -41,7 +41,7 @@ export function ScenarioItemsTable({
 
   return (
     <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-      <table className="w-full min-w-[980px] text-sm">
+      <table className="w-full min-w-[880px] text-sm">
         <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className="px-3 py-2.5">#</th>
@@ -75,7 +75,7 @@ export function ScenarioItemsTable({
               >
                 <td className="px-3 py-2 text-muted">{row.sno}</td>
 
-                <td className="max-w-[20rem] px-3 py-2">
+                <td className="max-w-[18rem] px-3 py-2">
                   {row.isAdded ? (
                     // A duplicated row has no BOE description to fall back on,
                     // so it carries and edits its own.
@@ -84,7 +84,7 @@ export function ScenarioItemsTable({
                       onChange={(e) =>
                         onChange(row.invsno, row.itemsn, { description: e.target.value })
                       }
-                      className="w-full min-w-[14rem] rounded border border-line bg-surface px-2 py-1 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                      className="w-full min-w-[12rem] rounded border border-line bg-surface px-2 py-1 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
                       aria-label={`Description for added item ${row.sno}`}
                     />
                   ) : (
@@ -231,7 +231,7 @@ function CellInput({
         const parsed = Number(raw);
         if (Number.isFinite(parsed)) onChange(parsed);
       }}
-      className="tnum w-24 rounded border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+      className="tnum w-20 rounded border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
     />
   );
 }

@@ -13,7 +13,7 @@ export function CostingTable({ result }: { result: CostingResult }) {
 
   return (
     <div className="overflow-x-auto rounded-xl border border-line bg-surface">
-      <table className="w-full min-w-[900px] text-sm">
+      <table className="w-full min-w-[820px] text-sm">
         <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
           <tr>
             <th className="px-3 py-2.5">#</th>
@@ -31,7 +31,7 @@ export function CostingTable({ result }: { result: CostingResult }) {
           {rows.map((r) => (
             <tr key={r.key} className="border-t border-line">
               <td className="px-3 py-2 text-muted">{r.sno}</td>
-              <td className="max-w-[22rem] px-3 py-2">
+              <td className="max-w-[20rem] px-3 py-2">
                 <span className="block truncate" title={r.description}>
                   {r.description}
                 </span>

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getBoeBundle } from "@/lib/actuals";
+import { getBoeBundle, signDocumentUrls } from "@/lib/actuals";
 import { computeActual } from "@/lib/costing";
 import { date, inr, inr0, usd } from "@/lib/format";
 import { API_BASE_URL } from "@/lib/supabase";
@@ -28,9 +28,17 @@ export default async function BoePage({
     );
   }
 
-  const { boe, items, licences, variableFields } = bundle;
+  const { boe, items, licences, documents, variableFields } = bundle;
   const actual = computeActual(boe, items, variableFields);
   const licenceTotal = licences.reduce((s, l) => s + (l.debit_duty ?? 0), 0);
+
+  // Links are signed per render because the bucket is private. The BOE PDF
+  // gets its own button next to the costing: it is the source document every
+  // figure on this page was read from, so it is what people reach for when a
+  // number looks wrong.
+  const docUrls = await signDocumentUrls(documents);
+  const boePdf = documents.find((d) => d.doc_type === "BOE");
+  const boePdfUrl = boePdf ? docUrls.get(boePdf.storage_path) : undefined;
 
   const facts: Array<[string, string]> = [
     ["Supplier", boe.supplier_name ?? "—"],
@@ -62,6 +70,16 @@ export default async function BoePage({
           >
             Simulate costing
           </Link>
+          {boePdfUrl && (
+            <a
+              href={boePdfUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-lg border border-line px-4 py-2 text-sm font-medium transition hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              View BOE PDF
+            </a>
+          )}
           <a
             href={`${API_BASE_URL}/boe/${encodeURIComponent(boe.be_no)}/excel`}
             className="rounded-lg border border-line px-4 py-2 text-sm font-medium transition hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -148,6 +166,68 @@ export default async function BoePage({
               </tbody>
             </table>
           </div>
+        </section>
+      )}
+
+      {documents.length > 0 && (
+        <section className="mb-10">
+          <h2 className="mb-3 text-sm font-semibold">
+            Documents ({documents.length})
+          </h2>
+          <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
+                <tr>
+                  <th className="px-3 py-2.5">Type</th>
+                  <th className="px-3 py-2.5">File</th>
+                  <th className="px-3 py-2.5">Uploaded</th>
+                  <th className="px-3 py-2.5 text-right">Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents.map((doc) => {
+                  const url = docUrls.get(doc.storage_path);
+                  return (
+                    <tr key={doc.id} className="border-t border-line">
+                      <td className="px-3 py-2">
+                        <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          {doc.doc_type ?? "other"}
+                        </span>
+                      </td>
+                      <td className="max-w-[28rem] px-3 py-2">
+                        <span className="block truncate" title={doc.file_name ?? undefined}>
+                          {doc.file_name ?? doc.storage_path}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted">{date(doc.uploaded_at)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right">
+                        {url ? (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline dark:text-blue-400"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span
+                            className="text-xs text-muted"
+                            title="Indexed in boe_documents but not readable in Storage."
+                          >
+                            unavailable
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            Links are signed and expire an hour after the page is loaded. Reload to renew.
+          </p>
         </section>
       )}
     </main>

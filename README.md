@@ -141,11 +141,41 @@ flow, not cost. It is still reported separately as part of the cyber receipt.
 
 ### Two deliberate departures from the spreadsheet
 
-1. **The expense pool is bigger.** The template computes `I9 = I8+I7+I6+I5`,
-   omitting Supplier Freight, Bank Charges and Own Bank Charges — captured in
-   `K6:K8`, displayed, then silently dropped from cost per piece. Here they
-   are included, so **portal figures read higher than the old spreadsheet**
-   wherever those are non-zero. That difference is the bug being fixed.
+1. **The expense pool is bigger.** The template shipped with
+   `I9 = I8+I7+I6+I5`, omitting Misc Charges (`K5`, labelled "Freight
+   Charges - 2") and Supplier Freight, Bank Charges and Own Bank Charges
+   (`K6:K8`) — all four captured, displayed, then silently dropped from cost
+   per piece. All four are in the pool here, so **figures read higher than the
+   original spreadsheet** wherever any is non-zero. That difference is the bug
+   being fixed.
+
+   The Excel export writes `I9 = I5+I6+I7+I8+K5+K6+K7+K8`, so the workbook and
+   the screen agree. `costing.test.ts` pins that parity — the C-SHEET formulas
+   are evaluated by hand there and checked against this engine, because the
+   two implementations are shown to the same user from the same page.
+
+### Exporting a simulation
+
+`POST /boe/{be_no}/excel/simulation` returns the **same C-SHEET workbook** the
+record page exports for the actual BOE, filled with a scenario's figures. Same
+layout, same live formulas; a red banner in `A10` names the scenario so a
+what-if can never be mistaken for the actual record.
+
+The maths is not redone server-side. The portal posts the `CostingResult` it
+is already displaying and the backend only lays it into the template — the
+same reason `costing.ts` is the single source of truth everywhere else. Three
+things a scenario needs that an actual BOE does not:
+
+| | |
+| --- | --- |
+| `margin_pct` | column J, instead of the actual's hardcoded `102%` |
+| `other_charges` | `I8`, which an actual BOE has no field for |
+| `foc_keys` | cost per piece becomes `=(G+H)/C`, dropping the goods value: an FOC item is paid for by nobody, but its value stays in `F` so it still absorbs freight and duty — mirroring `payableInr` |
+
+`bcd_forgone` is deliberately not passed. `costing.ts` has already resolved
+each item's BCD to whichever of cash or licence-foregone applies, so letting
+D-DETAILS substitute a foregone amount for a zero BCD would overwrite duty a
+scenario waived on purpose.
 
 2. **Duty can float.** The BOE records duty *amounts*, never *rates*, so
    effective rates are back-computed from what customs actually charged. A
@@ -181,18 +211,94 @@ reproduces the actual costing exactly until something is deliberately changed.
   back from the live database; types are inferred from the code. Good enough
   to stand up a fresh environment, but verify before trusting it for a
   migration.
-- **Four parser bugs**, confirmed against a real BOE:
-  1. `parse_scheme_g` reads an item's **quantity** as its BCD-amount-foregone,
-     because the Part III row matches the column shape it looks for. Harmless
-     when cash BCD is non-zero; **on a licence-paid BOE it would write the
-     wrong BCD.**
-  2. The diagonal "ASSESSED COPY" watermark bleeds letters into item
-     descriptions (`Super Charger 5AE`).
-  3. Page footers get appended to the last description on a page
-     (`Playmate 2 RemoSte Page 2 Of 7`).
-  4. `importer_name` is never extracted.
 - **Margin is computed but not displayed.** `margin_pct` drives
-  `sellingPerPiece` / `totalSelling`, which nothing currently renders.
-- **No Excel export.** The old Python Excel writer was deliberately not
-  carried over; `costing.ts` is the single source of truth for the maths.
+  `sellingPerPiece` / `totalSelling`, which nothing currently renders on
+  screen — though both reach the Excel export.
+- **`cth` and `uqc` are never populated.** Both are in the schema and in
+  `BoeItem`, and the item regex in `parse_page2` already matches them — it
+  just doesn't capture them. Nothing displays them either.
+- **Supporting-document extraction is heuristic.** `doc_extract.py` is regex
+  over arbitrary supplier PDFs with no shared template, so treat its output as
+  a hint. `raw_text` is always kept for exactly that reason.
+- **`reference-data.ts` is unused.** The supplier master, clearing agents and
+  freight forwarders lifted from the F-SHEET are imported nowhere; manual
+  entry takes a free-text supplier.
 - **Scenarios do not version.** Editing one overwrites it.
+
+## Fixed parser bugs
+
+Seven bugs found against real BOEs and fixed. Kept here because each says
+something about the form that the next one will need.
+
+0. **Freight quoted in a foreign currency was read as rupees.** The three
+   figures on the valuation row are not all INR, and which ones are varies by
+   BOE. The row beneath them says so:
+
+   ```
+   43091.68  636.82  4588   DP  Rule 4 - Transaction Value
+   14.Cur    USD     USD    INR
+   ```
+
+   That row was never read, and freight was taken as INR whatever it said. On
+   BE 3168452 that turned USD 636.82 of freight into 636.82 rupees — ₹60,530
+   missing from the expense pool of a ₹4.2M consignment, under-costing all 38
+   items. It survived because the first sample BOE happened to quote freight
+   in INR. `parse_exchange_rates()` now reads every rate the BOE states (it
+   prints one per currency in play) and freight and insurance are converted by
+   their own stated currency.
+
+   Both sample BOEs now reconcile against the assessable value the form itself
+   declares — the check that would have caught this on day one, and the reason
+   it is worth keeping: computed vs. `14.ASS. VALUE`, to the paisa.
+
+   **A parser fix does not reach a BOE already in the database.** Parsing
+   happens at upload, so a stored record keeps whatever was read at the time;
+   re-upload it to pick up the fix. That was not enough on its own either:
+   `boe_variable_fields.freight_charges` shadows `boes.freight_inr` in
+   `resolveActualInputs`, and `save_boe()` did not touch it, so a corrected
+   parse was still overridden by the stale figure. `save_boe()` now calls
+   `refresh_provisional_fields()`, which brings any field still marked
+   *provisional* back in line with the new parse and logs the change to
+   `boe_field_history`. Fields marked *fixed* have been confirmed by a person
+   and are never overwritten.
+
+1. **Bleed from the page furniture.** The form prints all its content between
+   7pt and 14pt. Two things outside that band land in the text layer anyway:
+   the diagonal "ASSESSED COPY" watermark at ~51–57pt, and the section labels
+   printed sideways down the margins, which arrive as single stacked
+   characters at 2.2–6.9pt. Both fuse with real tokens — `Charger 5A` read as
+   `Charger 5AE`, `Remote` as `RemoSte`, licence numbers as `2607E000174`, and
+   `Type-C Cable` trailed by `T E.E D M`. Once fused, no text matching can
+   separate them. `strip_watermark()` keeps only characters inside the body
+   band, *before* they are assembled into words, so no parser downstream has
+   to guess. Everything now reads from `extract_clean_text()`.
+
+2. **A workaround that ate real letters.** Sideways-label bleed used to be
+   swept up by deleting every lone capital from a description. That also
+   deleted real ones: `Type C - Mic` became `Type - Mic` and `Type-C Cable`
+   became `Type-Cable`, collapsing the Type-C and 3.5mm variants of the same
+   earphone into identical descriptions on a 38-item BOE. Filtering by
+   character size removes the bleed at its source, so the strip is gone.
+
+3. **Quantity recorded as assessable value.** `extract_assess_values_from_pages`
+   took the first row after an item carrying two numbers of three digits or
+   more. An item declared `250 PCS 250 NOS` puts two such numbers on its
+   *quantity* row, and being the earlier row it won — so eight items on BE
+   3168452 recorded their quantity as their assessable value. Rows carrying a
+   unit code are now skipped: that is what makes a row a quantity row, and
+   29.ASSESS VALUE never sits on one.
+4. **`parse_scheme_g` invented duty.** It matched Section G's column shape
+   across every page, and a Part III item row has that same shape — invsno and
+   itmsno in the same columns, `NOEXCISE` where the scheme name goes, and any
+   number in the description landing in the amount column. On the sample it
+   produced a BCD-foregone of `2.0` from the "02" in *Silent Power 02 Power
+   Modules*, on a BOE whose Section G is empty. Harmless while cash BCD is
+   non-zero, but on a licence-paid BOE — the only kind where Section G matters
+   — it would have written a description fragment in as the real BCD. Now
+   confined to the Section G band, tracked across pages.
+5. **Page footers ran into descriptions** (`Playmate 2 Remote Page 2 Of 7`).
+   The last item on a page has no next-item line to stop at, so the
+   continuation loop now also stops at `Page N Of M` and the ICETRAK line.
+6. **`importer_name` was never extracted.** `save_boe()` read a key no parser
+   ever set, so the column was null on every record ever saved.
+   `parse_importer()` reads Part I's "1.IMPORTER NAME & ADDRESS".

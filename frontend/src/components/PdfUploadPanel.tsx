@@ -146,17 +146,36 @@ export function PdfUploadPanel({ onFallback }: { onFallback: () => void }) {
           <p className="font-medium">Could not import {state.fileName}</p>
           <p className="mt-1">{state.message}</p>
 
-          {state.offline && (
-            <div className="mt-3 rounded border border-red-200 bg-white/60 p-3 text-xs dark:border-red-900 dark:bg-black/20">
-              <p className="mb-1.5 font-medium">Start the parser service, then try again:</p>
-              <code className="block break-all font-mono">
-                uvicorn backend.main:app --port 8000
-              </code>
-              <p className="mt-1.5 opacity-80">
-                Run it from the BOE-Costing-Sheet folder, with SUPABASE_URL and SUPABASE_KEY set.
-              </p>
-            </div>
-          )}
+          {/* Two very different situations produce the same failed fetch, and
+              the advice for one is useless for the other. Deployed, the parser
+              ships with the app and being unreachable is a server fault, not
+              something the reader can start. Locally it runs as its own
+              process on port 8000, and starting it is exactly the fix. */}
+          {state.offline &&
+            (API_BASE_URL.startsWith("http") ? (
+              <div className="mt-3 rounded border border-red-200 bg-white/60 p-3 text-xs dark:border-red-900 dark:bg-black/20">
+                <p className="mb-1.5 font-medium">Start the parser service, then try again:</p>
+                <code className="block break-all font-mono">
+                  python -m uvicorn _boe.main:app --port 8000
+                </code>
+                <p className="mt-1.5 opacity-80">
+                  Run it from <span className="font-mono">frontend/api</span>, with
+                  SUPABASE_URL and SUPABASE_KEY set in{" "}
+                  <span className="font-mono">frontend/api/.env</span>.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3 rounded border border-red-200 bg-white/60 p-3 text-xs dark:border-red-900 dark:bg-black/20">
+                <p className="mb-1.5 font-medium">The parser did not respond.</p>
+                <p className="opacity-80">
+                  It runs as part of this site, so there is nothing for you to start.
+                  A very large or scanned PDF can exceed the upload limit, and a long
+                  Bill of Entry can exceed the time limit — if this file is unusually
+                  big, that is the likely cause. Otherwise the deployment needs
+                  looking at.
+                </p>
+              </div>
+            ))}
 
           <div className="mt-3 flex flex-wrap gap-3">
             <button

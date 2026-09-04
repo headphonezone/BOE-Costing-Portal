@@ -6,12 +6,17 @@ const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 export const supabase = createClient(url, anonKey);
 
 /**
- * The parser service. It ships in the same Vercel deployment as this app
- * (see frontend/api/), so the default is same-origin and needs no host, no
- * CORS and no environment variable.
+ * The parser service, which is deployed separately from this app.
  *
- * Local development is the exception: the parser runs as its own process on
- * port 8000, so `frontend/.env.local` overrides this. Needed only for PDF
- * upload and the two Excel downloads.
+ * It has to be: a Next.js app and a Python function both claim `/api/*`, and
+ * inside a single Vercel project Next wins -- requests never reach Python. Its
+ * own project has no framework competing for the path.
+ *
+ * So this needs a host, and NEXT_PUBLIC_API_BASE_URL must be set in every
+ * environment that has a parser. The localhost default is for development;
+ * in production an unset value means the three parser-backed actions -- PDF
+ * upload and the two Excel downloads -- fail with a readable message, while
+ * the rest of the portal works normally.
  */
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";

@@ -156,12 +156,12 @@ export function PdfUploadPanel({ onFallback }: { onFallback: () => void }) {
               <div className="mt-3 rounded border border-red-200 bg-white/60 p-3 text-xs dark:border-red-900 dark:bg-black/20">
                 <p className="mb-1.5 font-medium">Start the parser service, then try again:</p>
                 <code className="block break-all font-mono">
-                  python -m uvicorn _boe.main:app --port 8000
+                  python -m uvicorn backend.main:app --port 8000
                 </code>
                 <p className="mt-1.5 opacity-80">
-                  Run it from <span className="font-mono">frontend/api</span>, with
+                  Run it from the project root, with
                   SUPABASE_URL and SUPABASE_KEY set in{" "}
-                  <span className="font-mono">frontend/api/.env</span>.
+                  <span className="font-mono">backend/.env</span>.
                 </p>
               </div>
             ) : (

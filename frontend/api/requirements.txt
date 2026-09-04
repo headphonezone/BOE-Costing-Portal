@@ -1,5 +1,7 @@
-# Vercel resolves Python dependencies from the project root directory, which
-# for this project is frontend/. This file exists only so the deps are found
-# whichever of the two locations the runtime looks in -- it is a pointer, not
-# a second list, so the two can never drift apart.
--r ../requirements.txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pdfplumber>=0.11.0
+openpyxl>=3.1.2
+supabase>=2.10.0
+python-multipart>=0.0.9
+python-dotenv>=1.0.0

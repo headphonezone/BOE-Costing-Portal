@@ -5,7 +5,7 @@ $root = Split-Path -Parent $PSScriptRoot
 Write-Host "Starting parser  -> http://127.0.0.1:8000"
 Start-Process powershell -ArgumentList @(
   "-NoExit", "-Command",
-  "Set-Location '$root'; python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
+  "Set-Location '$rootrontendpi'; python -m uvicorn _boe.main:app --host 127.0.0.1 --port 8000"
 )
 
 Start-Sleep -Seconds 2

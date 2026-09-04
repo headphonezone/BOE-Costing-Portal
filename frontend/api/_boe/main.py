@@ -16,7 +16,9 @@ from dotenv import load_dotenv
 
 # Loaded before supabase_client is imported, because that module reads its
 # credentials from the environment at import time.
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+# frontend/api/.env locally; on Vercel the platform supplies these and
+# the file is simply absent, which load_dotenv treats as a no-op.
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
 
 from fastapi import FastAPI, File, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402

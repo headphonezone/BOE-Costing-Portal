@@ -1,0 +1,5 @@
+# Vercel resolves Python dependencies from the project root directory, which
+# for this project is frontend/. This file exists only so the deps are found
+# whichever of the two locations the runtime looks in -- it is a pointer, not
+# a second list, so the two can never drift apart.
+-r ../requirements.txt

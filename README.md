@@ -13,21 +13,25 @@ Entry to test with. Nothing outside it is required.
 
 ```
 BOE-Costing-Portal/
-├── backend/          parser service (Python, FastAPI)
-│   ├── main.py             HTTP endpoints
-│   ├── boe_parser.py       ICEGATE PDF → structured data  ← the crown jewel
-│   ├── supabase_client.py  persistence
-│   ├── doc_extract.py      invoice / packing list / COO extraction
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env                credentials (gitignored)
-│
-├── frontend/         the portal (TypeScript, Next.js 16)
+├── frontend/         portal + parser, one Vercel deployment
 │   ├── src/lib/costing.ts       the costing model  ← read this first
-│   ├── src/lib/costing.test.ts  35 tests pinning it down
+│   ├── src/lib/costing.test.ts  the tests pinning it down
 │   ├── src/app/                 pages
 │   ├── src/components/          UI
-│   └── .env.local               config (gitignored)
+│   ├── .env.local               portal config (gitignored)
+│   ├── vercel.json              function timeout + /api routing
+│   └── api/                parser service (Python, FastAPI)
+│       ├── index.py             Vercel entry point, mounts the app at /api
+│       ├── requirements.txt
+│       ├── .env                 parser credentials (gitignored)
+│       └── _boe/                the service itself; `_` keeps Vercel from
+│           ├── main.py            publishing each module as an endpoint
+│           ├── boe_parser.py      ICEGATE PDF → structured data  ← crown jewel
+│           ├── supabase_client.py persistence
+│           └── doc_extract.py     invoice / packing list / COO extraction
+│
+├── backend/
+│   └── Dockerfile          run the parser as a container instead (optional)
 │
 ├── sql/              database schema, run in numeric order
 ├── samples/          drop a BOE PDF here to test with (gitignored)
@@ -41,8 +45,8 @@ BOE-Costing-Portal/
 **1. Configure both services.**
 
 ```bash
-cp backend/.env.example  backend/.env
-cp frontend/.env.example frontend/.env.local
+cp frontend/api/.env.example  frontend/api/.env
+cp frontend/.env.example      frontend/.env.local
 ```
 
 Fill in your Supabase project URL and keys. Both files point at the *same*
@@ -56,7 +60,7 @@ Supabase SQL editor. All statements are `if not exists`, so re-running is safe.
 **3. Install dependencies.**
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r frontend/api/requirements.txt
 cd frontend && npm install
 ```
 
@@ -70,12 +74,17 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1   # Windows
 Or start them separately:
 
 ```bash
-# parser — from this folder
-python -m uvicorn backend.main:app --port 8000
+# parser — from frontend/api/
+python -m uvicorn _boe.main:app --port 8000
 
 # portal — from frontend/
 npm run dev
 ```
+
+In production there is no second process: `frontend/api/index.py` ships in the
+same Vercel deployment and the portal calls `/api/...` on its own origin. The
+two run separately only in local development, which is why
+`NEXT_PUBLIC_API_BASE_URL` exists at all.
 
 Then open the portal. Drop a real BOE PDF into `samples/` and upload it to
 check the whole pipeline end to end — see `samples/README.md`. Bills of Entry

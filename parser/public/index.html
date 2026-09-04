@@ -1,0 +1,31 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BOE Parser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: #fbfaf7; color: #131a24;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #0e1319; color: #e8eaed; } }
+  main { max-width: 34rem; padding: 2rem; }
+  h1 { font-size: 1.15rem; margin: 0 0 .5rem; }
+  p { margin: 0 0 1rem; opacity: .8; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; }
+  li { margin-bottom: .3rem; }
+</style>
+<main>
+  <h1>BOE parser</h1>
+  <p>
+    This service reads ICEGATE Bill of Entry PDFs. It has no interface of its
+    own — the portal calls it.
+  </p>
+  <ul>
+    <li><code>GET /boe</code> — every stored record</li>
+    <li><code>GET /boe/{be_no}</code> — one record with its items</li>
+    <li><code>POST /boe/upload</code> — parse and store a BOE PDF</li>
+    <li><code>GET /docs</code> — the full API</li>
+  </ul>
+</main>

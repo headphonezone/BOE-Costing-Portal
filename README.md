@@ -13,19 +13,19 @@ Entry to test with. Nothing outside it is required.
 
 ```
 BOE-Costing-Portal/
-├── backend/          parser service (Python, FastAPI)
-│   ├── main.py             HTTP endpoints
-│   ├── boe_parser.py       ICEGATE PDF → structured data  ← the crown jewel
-│   ├── supabase_client.py  persistence
-│   ├── doc_extract.py      invoice / packing list / COO extraction
+├── parser/           parser service — its own Vercel project
+│   ├── vercel.json         no framework, everything → api/index
+│   ├── requirements.txt
 │   ├── Dockerfile          run it as a container instead (optional)
-│   └── .env                credentials (gitignored)
+│   ├── api/index.py        Vercel entry point
+│   └── backend/            the service itself
+│       ├── main.py             HTTP endpoints
+│       ├── boe_parser.py       ICEGATE PDF → structured data  ← crown jewel
+│       ├── supabase_client.py  persistence
+│       ├── doc_extract.py      invoice / packing list / COO extraction
+│       └── .env                credentials (gitignored)
 │
-├── api/index.py      Vercel entry point for the parser
-├── requirements.txt  parser dependencies (Vercel reads this from the root)
-├── vercel.json       parser project: no framework, everything → api/index
-│
-├── frontend/         the portal (TypeScript, Next.js 16)
+├── frontend/         the portal — its own Vercel project (Next.js 16)
 │   ├── src/lib/costing.ts       the costing model  ← read this first
 │   ├── src/lib/costing.test.ts  the tests pinning it down
 │   ├── src/app/                 pages
@@ -44,7 +44,7 @@ BOE-Costing-Portal/
 **1. Configure both services.**
 
 ```bash
-cp backend/.env.example      backend/.env
+cp parser/backend/.env.example parser/backend/.env
 cp frontend/.env.example      frontend/.env.local
 ```
 
@@ -59,7 +59,7 @@ Supabase SQL editor. All statements are `if not exists`, so re-running is safe.
 **3. Install dependencies.**
 
 ```bash
-pip install -r requirements.txt
+pip install -r parser/requirements.txt
 cd frontend && npm install
 ```
 
@@ -73,7 +73,7 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1   # Windows
 Or start them separately:
 
 ```bash
-# parser — from this folder
+# parser — from parser/
 python -m uvicorn backend.main:app --port 8000
 
 # portal — from frontend/
@@ -84,16 +84,23 @@ npm run dev
 
 Two Vercel projects, both from this repo:
 
-| Project | Root Directory | Framework |
-| --- | --- | --- |
-| portal | `frontend` | Next.js |
-| parser | `.` (repo root) | **None** |
+| Project | Root Directory | Framework | Config |
+| --- | --- | --- | --- |
+| portal | `frontend` | Next.js | none — zero-config |
+| parser | `parser` | **Other** | `parser/vercel.json` |
 
-They are separate because a Next.js app and a Python function both claim
-`/api/*`, and inside one project Next wins — every request is answered by
-Next's own 404 and 500 pages and never reaches Python. A project with no
-framework has nothing competing for the path, so `vercel.json` can route
-everything to `api/index.py`.
+Two things forced this shape, both learned the hard way:
+
+1. A Next.js app and a Python function both claim `/api/*`, and inside one
+   project Next wins — requests are answered by Next's own 404 and 500 pages
+   and never reach Python. The parser needs a project with no framework.
+2. A `vercel.json` at the **repository root** is applied to the portal too,
+   whatever root directory it is configured with, and a parser config there
+   produces an empty portal deployment — `X-Vercel-Error: NOT_FOUND` on every
+   path. Adding `frontend/vercel.json` does not shadow it.
+
+Hence `parser/` is entirely self-contained and nothing sits at the repository
+root. Neither project can affect the other.
 
 Set `NEXT_PUBLIC_API_BASE_URL` on the portal to the parser's URL, and
 `ALLOWED_ORIGINS` on the parser to the portal's. `NEXT_PUBLIC_*` values are

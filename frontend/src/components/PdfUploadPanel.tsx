@@ -159,9 +159,9 @@ export function PdfUploadPanel({ onFallback }: { onFallback: () => void }) {
                   python -m uvicorn backend.main:app --port 8000
                 </code>
                 <p className="mt-1.5 opacity-80">
-                  Run it from the project root, with
+                  Run it from <span className="font-mono">parser/</span>, with
                   SUPABASE_URL and SUPABASE_KEY set in{" "}
-                  <span className="font-mono">backend/.env</span>.
+                  <span className="font-mono">parser/backend/.env</span>.
                 </p>
               </div>
             ) : (

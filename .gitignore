@@ -29,3 +29,9 @@ coverage/
 # supplier, unit prices, duty. Keep them local, never in the repository.
 samples/*
 !samples/README.md
+
+# ---- working scratch ----
+# Query/ holds real Bills of Entry and generated workbooks while a parsing
+# problem is being investigated. Same reason samples/ is ignored: a BOE
+# carries the importer's IEC and GSTIN, the supplier, unit prices and duty.
+Query/

@@ -1571,16 +1571,10 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
     # the old pattern required the 2nd/3rd number groups to be pure digits,
     # so any decimal freight/insurance value broke the whole match and
     # freight/insurance/inv_value were silently left unset.
-    # FIX: freight is not always an amount. Where no actual air freight was
-    # declared, customs applies the statutory cap and the form prints the rate
-    # itself -- "20%" -- in the freight column. The old pattern required three
-    # plain numbers, so a percentage did not merely lose freight: the whole row
-    # failed to match and the invoice value and insurance went with it. On BE
-    # 8470454 that left all three null.
-    m = re.search(r'([\d.]+)\s+([\d.]+%?)\s+([\d.]+)\s+DP', page2_text)
+    m = re.search(r'([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+DP', page2_text)
     if m:
         inv_value = float(m.group(1))
-        freight_raw = m.group(2)
+        freight = float(m.group(2))
         insurance = float(m.group(3))
 
         # FIX: those three figures are NOT all in INR, and which ones are
@@ -1600,40 +1594,15 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
         # inv_value keeps its own currency: it lands in boes.inv_value_usd,
         # which is the invoice figure as invoiced. freight and insurance are
         # stored as INR columns, so they are converted here.
-        rate_table = rates or {'INR': 1.0, 'USD': exchange_rate}
-        freight_is_rate = freight_raw.endswith('%')
-
-        # 14.Cur names a currency per figure, in order, and only for the
-        # figures that have one. A percentage freight has no currency, so the
-        # row carries two codes rather than three and the second belongs to
-        # insurance, not freight. Reading it positionally rather than by fixed
-        # group would silently apply the insurance currency to freight.
-        cur = re.search(r'14\.Cur((?:\s+[A-Z]{3})+)', page2_text)
-        codes = cur.group(1).split() if cur else []
-        if freight_is_rate:
-            inv_cur = codes[0] if len(codes) > 0 else None
-            frt_cur = None
-            ins_cur = codes[1] if len(codes) > 1 else None
-        else:
-            inv_cur = codes[0] if len(codes) > 0 else None
-            frt_cur = codes[1] if len(codes) > 1 else None
-            ins_cur = codes[2] if len(codes) > 2 else None
+        cur = re.search(r'14\.Cur\s+([A-Z]{3})\s+([A-Z]{3})\s+([A-Z]{3})', page2_text)
+        if cur:
+            rate_table = rates or {'INR': 1.0, 'USD': exchange_rate}
+            freight = _to_inr(freight, cur.group(2), rate_table)
+            insurance = _to_inr(insurance, cur.group(3), rate_table)
 
         meta['inv_value'] = inv_value
-        meta['insurance'] = _to_inr(insurance, ins_cur, rate_table)
-
-        if freight_is_rate:
-            # A rate needs a base, and the base is not the invoice value
-            # alone: on BE 8470454, 20% of (invoice value + misc charge)
-            # reproduces the form's own assessable value exactly, where 20% of
-            # the invoice value alone is short by 9,967.80. Misc charge is
-            # parsed further down, so this is finished once it is known.
-            meta['freight_rate_pct'] = float(freight_raw.rstrip('%'))
-            meta['_freight_base_currency'] = inv_cur
-            meta['freight'] = None
-        else:
-            meta['freight_rate_pct'] = None
-            meta['freight'] = _to_inr(float(freight_raw), frt_cur, rate_table)
+        meta['freight'] = freight
+        meta['insurance'] = insurance
 
     # FIX: verified against real pdfplumber output — the "13.MISC CHARGE
     # 14.ASS. VALUE" label line is immediately followed by its own value
@@ -1648,21 +1617,7 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
     if m:
         nums = m.group(1).split()
         if len(nums) >= 2:
-            # FIX: this used to be multiplied by the exchange rate. It sits in
-            # section D beside the assessable value, which is unambiguously
-            # rupees, and treating it as foreign turned BE 8470454's 49,839
-            # into 4,674,898 -- seven times the whole consignment's assessable
-            # value, and impossible as a foreign-currency figure against a
-            # 5,613 USD invoice.
-            meta['misc_charges_inr'] = round(float(nums[0]), 2)
-
-    # Freight quoted as a rate can only be resolved now, with the misc charge
-    # that forms part of its base.
-    if meta.get('freight_rate_pct') is not None and meta.get('inv_value') is not None:
-        rate_table = rates or {'INR': 1.0, 'USD': exchange_rate}
-        base = _to_inr(meta['inv_value'], meta.pop('_freight_base_currency', None), rate_table)
-        base += meta.get('misc_charges_inr') or 0.0
-        meta['freight'] = round(base * meta['freight_rate_pct'] / 100.0, 2)
+            meta['misc_charges_inr'] = round(float(nums[0]) * exchange_rate, 2)
 
     items = []
     # FIX: unit price / quantity / amount previously required at least one

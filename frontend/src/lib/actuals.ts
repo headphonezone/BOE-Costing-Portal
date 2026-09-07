@@ -4,6 +4,7 @@
  * writes to them.
  */
 import { supabase } from "./supabase";
+import { supabaseServer } from "./supabase-server";
 import type { Boe, BoeDocument, BoeItem, BoeLicence, BoeVariableFields } from "./types";
 
 export type BoeBundle = {
@@ -85,7 +86,10 @@ export async function signDocumentUrls(
   const entries = await Promise.all(
     documents.map(async (doc) => {
       try {
-        const { data } = await supabase.storage
+        // Signed with the server-only client so the bucket can refuse the
+        // anon key outright. This function is only ever called from a server
+        // component, so the service key never leaves the server.
+        const { data } = await supabaseServer.storage
           .from(DOCS_BUCKET)
           .createSignedUrl(doc.storage_path, SIGNED_URL_TTL_SECONDS);
         return [doc.storage_path, data?.signedUrl] as const;

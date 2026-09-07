@@ -11,6 +11,7 @@ from backend/.env, so this folder runs without anything outside it.
 import io
 import os
 import re
+import secrets
 
 from dotenv import load_dotenv
 
@@ -20,7 +21,7 @@ from dotenv import load_dotenv
 # simply absent, which load_dotenv treats as a no-op.
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-from fastapi import FastAPI, File, HTTPException, UploadFile  # noqa: E402
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 import pdfplumber  # noqa: E402
@@ -30,6 +31,36 @@ from . import supabase_client as db  # noqa: E402
 from . import doc_extract  # noqa: E402
 
 app = FastAPI(title="BOE Costing API")
+
+
+# ---------------------------------------------------------------------------
+# Access control
+#
+# The portal calls exactly three endpoints -- /boe/upload and the two Excel
+# routes -- and it calls them from a browser with no credential to offer, so
+# those stay open until there is a login to attach one to.
+#
+# Everything else is reachable by anyone who knows the URL and nothing else.
+# That is how an anonymous DELETE could remove a Bill of Entry, its items,
+# licences, field history and the PDFs in Storage, and how GET /boe would
+# hand over every import record as JSON. None of them is used by the portal,
+# so requiring a shared secret costs no functionality.
+#
+# Fails closed: with no token configured these endpoints are unavailable
+# rather than open, because an unset variable in a new environment must not
+# quietly reopen the door.
+ADMIN_TOKEN = os.environ.get("PARSER_ADMIN_TOKEN", "").strip()
+
+
+def require_admin(x_admin_token: str | None = Header(default=None)) -> None:
+    """
+    Guards the endpoints the portal does not use. FastAPI maps the header
+    name X-Admin-Token onto this parameter.
+    """
+    if not ADMIN_TOKEN:
+        raise HTTPException(503, "Administrative endpoints are disabled: PARSER_ADMIN_TOKEN is not set")
+    if not x_admin_token or not secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
+        raise HTTPException(401, "Missing or invalid X-Admin-Token")
 
 app.add_middleware(
     CORSMiddleware,
@@ -130,7 +161,7 @@ async def upload_boe(file: UploadFile = File(...)):
     }
 
 
-@app.post("/boe/{be_no}/documents")
+@app.post("/boe/{be_no}/documents", dependencies=[Depends(require_admin)])
 async def upload_supporting_document(be_no: str, doc_type: str = "OTHER", file: UploadFile = File(...)):
     existing = db.get_boe(be_no)
     if not existing:
@@ -153,12 +184,12 @@ async def upload_supporting_document(be_no: str, doc_type: str = "OTHER", file: 
     return {'storage_path': path, 'extraction': extraction}
 
 
-@app.get("/boe")
+@app.get("/boe", dependencies=[Depends(require_admin)])
 def list_boes():
     return db.list_boes()
 
 
-@app.get("/boe/{be_no}")
+@app.get("/boe/{be_no}", dependencies=[Depends(require_admin)])
 def get_boe(be_no: str):
     result = db.get_boe(be_no)
     if not result:
@@ -166,7 +197,7 @@ def get_boe(be_no: str):
     return result
 
 
-@app.delete("/boe/{be_no}")
+@app.delete("/boe/{be_no}", dependencies=[Depends(require_admin)])
 def delete_boe(be_no: str):
     deleted = db.delete_boe(be_no)
     if not deleted:
@@ -180,7 +211,7 @@ class FieldUpdate(BaseModel):
     status: str  # 'provisional' | 'fixed'
 
 
-@app.patch("/boe/{be_no}/field")
+@app.patch("/boe/{be_no}/field", dependencies=[Depends(require_admin)])
 def update_field(be_no: str, update: FieldUpdate):
     if update.status not in ('provisional', 'fixed'):
         raise HTTPException(422, "status must be 'provisional' or 'fixed'")

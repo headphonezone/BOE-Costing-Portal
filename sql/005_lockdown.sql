@@ -5,43 +5,44 @@
 --
 -- The anon key ships in the portal's page source, which is by design -- it is
 -- meant to be public, and row level security is meant to be what constrains
--- it. That was never applied here. An audit with the public key found:
+-- it. RLS was enabled here, but every table carried an `allow all for anon`
+-- policy granting ALL commands, so it constrained nothing. An audit with the
+-- public key confirmed the effect:
 --
 --   * 8 of 9 tables readable, insertable and deletable by anyone
---   * only boe_document_extractions protected, and only by accident
---   * the document bucket listable, downloadable and writable
+--   * the boe-documents bucket listable, downloadable AND writable, holding
+--     real Bills of Entry -- importer IEC and GSTIN, supplier, unit prices,
+--     duty
 --
 -- Anyone with the site URL could read every import record and delete all of
--- them. This migration removes the write half.
+-- them. This removes the write half.
 --
 -- WHAT THIS DOES NOT FIX
 --
 -- Reads stay open. Without a login there is no way to tell a colleague from a
 -- stranger, so every SELECT the portal needs is a SELECT anyone can make.
--- Closing that requires authentication -- see the README's Known gaps.
+-- Closing that requires authentication.
 --
--- ---------------------------------------------------------------------------
--- BEFORE RUNNING THIS
+-- PREREQUISITES (both done)
 --
---   1. Set SUPABASE_KEY on the parser project to the SERVICE_ROLE key, not
---      the anon key. The parser writes every table this migration closes.
---      service_role bypasses RLS; anon will no longer be able to write, and
---      PDF upload will fail with a policy error until this is done.
+--   * parser project SUPABASE_KEY is the service_role key, which bypasses RLS
+--   * portal project SUPABASE_SERVICE_KEY is set, so document links are
+--     signed server-side rather than with the anon key
 --
---   2. Set SUPABASE_SERVICE_KEY on the portal project (no NEXT_PUBLIC_
---      prefix -- that prefix would publish it). The portal signs document
---      links with it server-side.
---
--- Every statement is idempotent; re-running changes nothing.
+-- Idempotent: re-running changes nothing.
 -- ---------------------------------------------------------------------------
 
 
 -- ---------------------------------------------------------------------------
--- 1. Row level security on every table
---
--- Enabling RLS without a policy denies everything, so each table's read
--- policy is created in the same step.
+-- 1. Remove the blanket grants
 -- ---------------------------------------------------------------------------
+drop policy if exists "allow all for anon" on boes;
+drop policy if exists "allow all for anon" on boe_items;
+drop policy if exists "allow all for anon" on boe_licences;
+drop policy if exists "allow all for anon" on boe_variable_fields;
+drop policy if exists "allow all for anon" on boe_documents;
+drop policy if exists "allow all for anon" on boe_field_history;
+
 alter table boes                     enable row level security;
 alter table boe_items                enable row level security;
 alter table boe_licences             enable row level security;
@@ -49,14 +50,15 @@ alter table boe_variable_fields      enable row level security;
 alter table boe_documents            enable row level security;
 alter table boe_field_history        enable row level security;
 alter table boe_document_extractions enable row level security;
--- boe_scenarios and boe_scenario_items already have it, from 001.
 
 
 -- ---------------------------------------------------------------------------
 -- 2. Reads
 --
--- The portal reads these seven directly. Until there is a login, "public"
--- and "our team" are the same set of people, so these stay readable.
+-- The portal reads these five directly, so they stay readable. RLS denies
+-- anything it is not told to allow, so no INSERT, UPDATE or DELETE policy
+-- means those commands are refused -- the parser does that work with the
+-- service_role key, which bypasses RLS entirely.
 -- ---------------------------------------------------------------------------
 do $$
 declare t text;
@@ -64,29 +66,23 @@ begin
   foreach t in array array['boes','boe_items','boe_licences',
                            'boe_variable_fields','boe_documents']
   loop
-    execute format('drop policy if exists %I_read on %I', t, t);
-    execute format('create policy %I_read on %I for select using (true)', t, t);
+    execute format('drop policy if exists %I on %I', t || '_read', t);
+    execute format('create policy %I on %I for select using (true)', t || '_read', t);
   end loop;
 end $$;
 
--- The portal never reads these two. The history table is an audit trail and
--- the extraction table holds raw document text, so neither is exposed at all.
-drop policy if exists boe_field_history_read        on boe_field_history;
-drop policy if exists boe_document_extractions_read on boe_document_extractions;
+-- boe_field_history is an audit trail and boe_document_extractions holds raw
+-- document text. The portal reads neither, so neither gets a policy and both
+-- are closed to the anon key completely.
 
 
 -- ---------------------------------------------------------------------------
--- 3. Writes
+-- 3. Scenarios stay writable
 --
--- No write policies are created for the tables above, and RLS denies what it
--- is not told to allow. The parser writes them with the service_role key,
--- which bypasses RLS entirely -- that is the whole reason step 1 of the
--- checklist above is not optional.
---
--- Scenarios are the exception. They are created and edited from the browser
--- with the anon key, so closing them would remove the simulation feature.
--- They hold no import data of their own -- only adjustments referencing a
--- BOE -- so the exposure is bounded, and it closes when login lands.
+-- Simulations are created and edited from the browser with the anon key, so
+-- closing these would remove the feature. They hold no import data of their
+-- own -- only adjustments referencing a BOE -- so the exposure is bounded,
+-- and it closes when login lands.
 -- ---------------------------------------------------------------------------
 drop policy if exists boe_scenarios_all      on boe_scenarios;
 drop policy if exists boe_scenario_items_all on boe_scenario_items;
@@ -98,55 +94,25 @@ create policy boe_scenario_items_all on boe_scenario_items
 
 
 -- ---------------------------------------------------------------------------
--- 4. Manual entry
+-- 4. Storage
 --
--- frontend/src/lib/manual-entry.ts writes boes and boe_items straight from
--- the browser, deliberately: it is the fallback for when the parser cannot
--- read a PDF, so it must not depend on the parser being reachable.
+-- The bucket is already marked private, but a policy granted ALL commands to
+-- `public` on it, which is how the anon key could list, download and upload
+-- Bills of Entry.
 --
--- That design predates this migration and is now the one hole left in the
--- write lockdown. Uncomment ONLY if you need manual entry working before
--- login exists, and understand that it reopens insert, update and delete on
--- your import records to anyone with the site URL.
---
--- The better fix is to route manual entry through the parser service, which
--- holds the service_role key.
+-- Dropping it leaves no policy, so anon gets nothing. The portal is
+-- unaffected: it signs links with the service_role key, which bypasses this.
 -- ---------------------------------------------------------------------------
--- create policy boes_manual_entry on boes
---   for all using (true) with check (true);
--- create policy boe_items_manual_entry on boe_items
---   for all using (true) with check (true);
+drop policy if exists "allow all for anon on boe-documents" on storage.objects;
 
 
 -- ---------------------------------------------------------------------------
--- 5. Storage
+-- 5. Manual entry
 --
--- Run these in the Supabase dashboard (Storage -> Policies) or here. The
--- bucket holds real Bills of Entry: IEC, GSTIN, supplier, unit prices, duty.
--- It was listable, downloadable AND writable with the anon key.
+-- frontend/src/lib/manual-entry.ts wrote boes and boe_items straight from the
+-- browser. That is exactly the access this migration closes, so the feature
+-- is removed from the UI in the same change rather than left to fail.
 --
--- The portal no longer needs anon access to it: signed links are minted
--- server-side with the service key (frontend/src/lib/supabase-server.ts), and
--- service_role bypasses these policies.
--- ---------------------------------------------------------------------------
-drop policy if exists boe_documents_anon_read   on storage.objects;
-drop policy if exists boe_documents_anon_write  on storage.objects;
-drop policy if exists boe_documents_public_read on storage.objects;
-
--- No policy is created for the boe-documents bucket, so anon gets nothing.
--- Verify afterwards: listing or downloading with the anon key must fail.
-
-
--- ---------------------------------------------------------------------------
--- 6. Verify
---
--- With the anon key, these should return rows:
---     select count(*) from boes;
---
--- and these should all fail:
---     insert into boes (be_no) values ('__TEST__');
---     delete from boe_items where be_no = '__NOPE__';
---     select count(*) from boe_field_history;
---
--- and with the anon key, listing the boe-documents bucket must return nothing.
+-- To bring it back, route it through the parser service, which holds the
+-- service_role key -- not by reopening these tables to anon.
 -- ---------------------------------------------------------------------------

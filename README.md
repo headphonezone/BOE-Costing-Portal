@@ -129,13 +129,14 @@ So one Python process must exist. It is needed for **exactly one action**:
 
 | | Needs the parser? |
 | --- | --- |
-| **PDF upload** | ✅ the only one |
-| Manual entry | ❌ writes straight to Supabase |
+| **PDF upload** | ✅ |
+| **Excel download** (actual and simulated) | ✅ |
 | Records list, filters | ❌ |
 | Costing, simulations | ❌ |
 
-Manual entry deliberately bypasses the backend — it is the fallback for when
-parsing fails, so it must not depend on the thing that failed.
+It also holds the service_role key, so it is the only path that can write the
+import tables at all — the browser's anon key can read them but not change
+them.
 
 The two connect through one line in `frontend/.env.local`:
 
@@ -232,9 +233,16 @@ reproduces the actual costing exactly until something is deliberately changed.
 
 ## Known gaps
 
-- **No authentication.** RLS is enabled with fully open policies so the portal
-  works today. Anyone with the anon key can read and write. Put IAP or
-  Supabase Auth in front before this leaves the office.
+- **No authentication.** Reads are open to anyone with the URL: without a
+  login there is no way to tell a colleague from a stranger, so every SELECT
+  the portal needs is a SELECT anyone can make. Writes are closed —
+  `sql/005_lockdown.sql` removed the `allow all for anon` policies, and the
+  parser does its writing with the service_role key, which bypasses RLS.
+  Supabase Auth plus per-role policies is what closes the reads.
+- **Manual entry was removed.** It wrote a BOE and its items straight from
+  the browser, which is exactly the access the lockdown closed. To bring it
+  back, route it through the parser service rather than reopening those
+  tables. See the note in `frontend/src/app/upload/page.tsx`.
 - **`sql/000_base_tables.sql` is a reconstruction.** Those tables were created
   by hand and their DDL was never checked in anywhere. Column names were read
   back from the live database; types are inferred from the code. Good enough

@@ -17,7 +17,7 @@ type State =
   | { status: "error"; fileName: string; message: string; offline: boolean }
   | { status: "done"; result: Result };
 
-export function PdfUploadPanel({ onFallback }: { onFallback: () => void }) {
+export function PdfUploadPanel() {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "idle" });
   const [dragOver, setDragOver] = useState(false);
@@ -184,13 +184,6 @@ export function PdfUploadPanel({ onFallback }: { onFallback: () => void }) {
               className="font-medium underline underline-offset-2"
             >
               Try another file
-            </button>
-            <button
-              type="button"
-              onClick={onFallback}
-              className="font-medium underline underline-offset-2"
-            >
-              Enter it by hand instead
             </button>
           </div>
         </div>

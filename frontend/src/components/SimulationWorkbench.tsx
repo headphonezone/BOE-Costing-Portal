@@ -13,6 +13,9 @@ import {
   type CostRow,
 } from "@/lib/costing";
 import { downloadSimulationExcel } from "@/lib/export";
+import { LockedScenarioPanel, ScenarioLockControl } from "@/components/ScenarioLock";
+import { FirstSavePasswordPrompt, ScenarioList } from "@/components/ScenarioList";
+import type { ScenarioIndexEntry } from "@/lib/scenarios";
 import { inr, pct } from "@/lib/format";
 import {
   createScenario,
@@ -43,14 +46,47 @@ export function SimulationWorkbench({
   items,
   variableFields,
   initialScenarios,
+  initialIndex,
+  isAdmin,
 }: {
   boe: Boe;
   items: BoeItem[];
   variableFields: BoeVariableFields | null;
   initialScenarios: ScenarioWithItems[];
+  /** Every scenario on this BOE, locked ones included -- see listScenarioIndex. */
+  initialIndex: ScenarioIndexEntry[];
+  isAdmin: boolean;
 }) {
   const [scenarios, setScenarios] = useState(initialScenarios);
-  const [activeId, setActiveId] = useState<string | null>(initialScenarios[0]?.id ?? null);
+  // Not state: every lock change reloads the page, because the grant lives in
+  // the database and the body has to be re-fetched with it. Local state would
+  // only be a second, staler copy of what the server just sent.
+  const index = initialIndex;
+  const [activeId, setActiveId] = useState<string | null>(null);
+  /**
+   * Where a BOE with existing simulations opens.
+   *
+   * Landing straight in one of several simulations means picking for the
+   * reader, and picking wrong: which of "Q3 revised" and "supplier B" they
+   * wanted is not something this component can know. So a BOE that has any
+   * simulations opens on the list of them, by name, and a BOE that has none
+   * opens where it always did -- on the invitation to make the first one.
+   */
+  const [view, setView] = useState<"list" | "workbench">(
+    initialIndex.length > 0 ? "list" : "workbench"
+  );
+  /**
+   * Scenarios created in this session and not yet saved once.
+   *
+   * A password is offered at the end of the first save rather than from a
+   * button somewhere on the toolbar: at that moment the reader has just
+   * decided the simulation is worth keeping, which is the only moment they
+   * have an opinion about who else should see it.
+   */
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
+  const [passwordPrompt, setPasswordPrompt] = useState<{ id: string; name: string } | null>(
+    null
+  );
   const [dirty, setDirty] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +103,13 @@ export function SimulationWorkbench({
   function selectScenario(id: string) {
     setActiveId(id);
     setEditing(false);
+    setView("workbench");
+  }
+
+  /** Back to the list, without losing anything typed but unsaved. */
+  function backToList() {
+    setEditing(false);
+    setView("list");
   }
 
   const actualInputs = useMemo(
@@ -98,6 +141,14 @@ export function SimulationWorkbench({
   }, [scenarios, boe, items, variableFields]);
 
   const active = scenarios.find((s) => s.id === activeId) ?? null;
+  // A locked scenario has an index entry but no body -- the policy withheld
+  // it -- so this is how "selected but not openable" is told apart from
+  // "nothing selected".
+  const lockedEntry =
+    !active && activeId
+      ? index.find((e) => e.id === activeId && e.is_locked && !e.has_access) ?? null
+      : null;
+  const activeEntry = index.find((e) => e.id === activeId) ?? null;
   const activeResult = active ? results.get(active.id)! : null;
   const comparison = activeResult ? compareCosting(baseline, activeResult) : null;
 
@@ -224,7 +275,9 @@ export function SimulationWorkbench({
       const created = await createScenario(boe.be_no, nextScenarioName(scenarios));
       setScenarios((prev) => [...prev, created]);
       setActiveId(created.id);
+      setFresh((prev) => new Set(prev).add(created.id));
       setEditing(true);
+      setView("workbench");
     });
   }
 
@@ -234,7 +287,9 @@ export function SimulationWorkbench({
       const copy = await duplicateScenario(active, nextScenarioName(scenarios));
       setScenarios((prev) => [...prev, copy]);
       setActiveId(copy.id);
+      setFresh((prev) => new Set(prev).add(copy.id));
       setEditing(true);
+      setView("workbench");
     });
   }
 
@@ -277,6 +332,18 @@ export function SimulationWorkbench({
         return next;
       });
       setEditing(false);
+
+      // First save of a simulation created in this session: offer a password
+      // once, here, and never ask again. Declining is a real answer -- most
+      // simulations are working notes and a password on each would be noise.
+      if (fresh.has(active.id)) {
+        setFresh((prev) => {
+          const next = new Set(prev);
+          next.delete(active.id);
+          return next;
+        });
+        setPasswordPrompt({ id: active.id, name: saved.name });
+      }
     });
   }
 
@@ -287,8 +354,11 @@ export function SimulationWorkbench({
       await deleteScenario(active.id);
       const remaining = scenarios.filter((s) => s.id !== active.id);
       setScenarios(remaining);
-      setActiveId(remaining[0]?.id ?? null);
+      setActiveId(null);
       setEditing(false);
+      // Back to the list rather than into whichever simulation happened to be
+      // next: after a deletion the reader is choosing again, not continuing.
+      setView(index.length > 1 ? "list" : "workbench");
     });
   }
 
@@ -302,21 +372,50 @@ export function SimulationWorkbench({
         </div>
       )}
 
-      {/* Scenario tabs -------------------------------------------------- */}
+      {passwordPrompt && (
+        <FirstSavePasswordPrompt
+          scenarioId={passwordPrompt.id}
+          scenarioName={passwordPrompt.name}
+          onDone={(didSet) => {
+            setPasswordPrompt(null);
+            // Only a password that was actually set changes what the server
+            // would send; skipping leaves the page already correct.
+            if (didSet) window.location.reload();
+          }}
+        />
+      )}
+
+      {/* Scenario tabs, only once something is open --------------------- */}
+      {view === "workbench" && (
       <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
-        {scenarios.map((s) => (
+        {index.length > 0 && (
           <button
-            key={s.id}
             type="button"
-            onClick={() => selectScenario(s.id)}
+            onClick={backToList}
+            className="mr-1 rounded-lg border border-line px-2.5 py-1.5 text-sm text-muted transition hover:border-blue-400 hover:text-foreground"
+          >
+            &larr; All simulations
+          </button>
+        )}
+        {/* From the index, not the loaded scenarios: a locked one has no body
+            to load but must still be listed, or the count would be wrong and a
+            colleague's simulation would appear not to exist. */}
+        {index.map((e) => (
+          <button
+            key={e.id}
+            type="button"
+            onClick={() => selectScenario(e.id)}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-              s.id === activeId
+              e.id === activeId
                 ? "bg-blue-600 text-white"
                 : "border border-line bg-surface hover:border-blue-400"
             }`}
           >
-            {s.name}
-            {dirty.has(s.id) && <span className="ml-1.5 text-amber-400">•</span>}
+            {e.name}
+            {e.is_locked && !e.has_access && (
+              <span className="ml-1.5 opacity-70" aria-label="locked">&#128274;</span>
+            )}
+            {dirty.has(e.id) && <span className="ml-1.5 text-amber-400">&bull;</span>}
           </button>
         ))}
         <button
@@ -328,8 +427,25 @@ export function SimulationWorkbench({
           + New simulation
         </button>
       </div>
+      )}
 
-      {!active ? (
+      {view === "list" ? (
+        <ScenarioList
+          entries={index}
+          onOpen={selectScenario}
+          onCreate={handleCreate}
+          busy={busy}
+        />
+      ) : lockedEntry ? (
+        <LockedScenarioPanel
+          entry={lockedEntry}
+          isAdmin={isAdmin}
+          // A full reload rather than local state: the grant lives in the
+          // database, and the scenario body has to be fetched by the server
+          // with that grant in place before anything can be shown.
+          onUnlocked={() => window.location.reload()}
+        />
+      ) : !active ? (
         <div className="rounded-xl border border-dashed border-line px-6 py-16 text-center">
           <p className="text-sm text-muted">
             No simulations saved for this BOE yet.
@@ -417,6 +533,15 @@ export function SimulationWorkbench({
                   </button>
                 </>
               )}
+              {/* Set, change or remove afterwards. The first offer is made
+                  automatically at the end of the first save, so this is for
+                  changing one's mind rather than for remembering to. */}
+              <ScenarioLockControl
+                scenarioId={active.id}
+                scenarioName={active.name}
+                isLocked={activeEntry?.is_locked ?? false}
+                onChanged={() => window.location.reload()}
+              />
               <button
                 type="button"
                 onClick={handleDuplicate}

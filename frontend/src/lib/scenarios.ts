@@ -5,6 +5,62 @@
 import { supabase } from "./supabase";
 import type { Scenario, ScenarioItem, ScenarioWithItems } from "./types";
 
+/** Identity and lock state for every scenario on a BOE, including locked ones. */
+export type ScenarioIndexEntry = {
+  id: string;
+  name: string;
+  is_locked: boolean;
+  has_access: boolean;
+  created_at: string;
+};
+
+/**
+ * Every scenario on this BOE, named, whether or not it can be opened.
+ *
+ * The row-level policy withholds a locked scenario's body, so a plain select
+ * returns fewer rows than exist -- and a comparison that silently drops them
+ * would misstate how many scenarios there are. This reads identity and lock
+ * state through a function that is allowed to see past the policy, and
+ * nothing else: no input, no figure.
+ */
+export async function listScenarioIndex(be_no: string): Promise<ScenarioIndexEntry[]> {
+  const { data, error } = await supabase.rpc("scenario_index", { p_be_no: be_no });
+  if (error) throw error;
+  return (data ?? []) as ScenarioIndexEntry[];
+}
+
+/** Offers a password. True means it was accepted and a grant now exists. */
+export async function unlockScenario(id: string, password: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc("scenario_unlock", {
+    p_scenario: id,
+    p_password: password,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+/** Sets or replaces a scenario's password. Owner or administrator only. */
+export async function setScenarioPassword(id: string, password: string): Promise<void> {
+  const { error } = await supabase.rpc("scenario_set_password", {
+    p_scenario: id,
+    p_password: password,
+  });
+  if (error) throw error;
+}
+
+/** Removes the lock entirely. Owner or administrator only. */
+export async function clearScenarioPassword(id: string): Promise<void> {
+  const { error } = await supabase.rpc("scenario_clear_password", { p_scenario: id });
+  if (error) throw error;
+}
+
+/** True when the signed-in user administers the portal. */
+export async function isAdmin(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("is_admin");
+  if (error) return false;
+  return data === true;
+}
+
 export async function listScenarios(be_no: string): Promise<ScenarioWithItems[]> {
   const { data: scenarios, error } = await supabase
     .from("boe_scenarios")

@@ -3,7 +3,7 @@
  * written by the existing BOE-Costing-Sheet FastAPI backend; the portal never
  * writes to them.
  */
-import { supabase } from "./supabase";
+import { supabaseServerComponent } from "./supabase-rsc";
 import { supabaseServer } from "./supabase-server";
 import type { Boe, BoeDocument, BoeItem, BoeLicence, BoeVariableFields } from "./types";
 
@@ -25,6 +25,7 @@ export const LIST_LIMIT = 1000;
 
 /** Every import record, newest first, for the client-side list page. */
 export async function listBoes(limit = LIST_LIMIT): Promise<Boe[]> {
+  const supabase = await supabaseServerComponent();
   const { data, error } = await supabase
     .from("boes")
     .select("*")
@@ -36,6 +37,7 @@ export async function listBoes(limit = LIST_LIMIT): Promise<Boe[]> {
 }
 
 export async function getBoeBundle(be_no: string): Promise<BoeBundle | null> {
+  const supabase = await supabaseServerComponent();
   const [{ data: boe }, { data: items }, { data: licences }, { data: docs }, { data: vf }] =
     await Promise.all([
       supabase.from("boes").select("*").eq("be_no", be_no).maybeSingle(),

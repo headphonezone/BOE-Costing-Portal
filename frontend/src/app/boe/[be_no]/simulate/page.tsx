@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getBoeBundle } from "@/lib/actuals";
-import { listScenarios } from "@/lib/scenarios";
+import { isAdminServer, listScenarioIndexServer, listScenariosServer } from "@/lib/scenarios-server";
 import { date } from "@/lib/format";
 import { SimulationWorkbench } from "@/components/SimulationWorkbench";
 
@@ -26,7 +26,14 @@ export default async function SimulatePage({
     );
   }
 
-  const scenarios = await listScenarios(decoded);
+  // Three reads, deliberately. The scenarios themselves come back only for
+  // those this user may open; the index names every one including the locked;
+  // and admin status decides whether a lock can be reset from here.
+  const [scenarios, index, admin] = await Promise.all([
+    listScenariosServer(decoded),
+    listScenarioIndexServer(decoded),
+    isAdminServer(),
+  ]);
   const { boe, items, variableFields } = bundle;
 
   return (
@@ -52,6 +59,8 @@ export default async function SimulatePage({
         items={items}
         variableFields={variableFields}
         initialScenarios={scenarios}
+        initialIndex={index}
+        isAdmin={admin}
       />
     </main>
   );

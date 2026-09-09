@@ -1,12 +1,24 @@
-import { createClient } from "@supabase/supabase-js";
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabase = createClient(url, anonKey);
+import { createBrowserClient } from "@supabase/ssr";
 
 /**
- * The parser service, which is deployed separately from this app.
+ * The browser's Supabase client.
+ *
+ * Session-aware: it reads and writes the auth cookie, so every query it makes
+ * carries the signed-in user's JWT rather than the bare anon key. That is what
+ * lets the database policies grant to `authenticated` instead of to anyone —
+ * the anon key compiled into this bundle stops being a key to the data and
+ * becomes only the key that lets a browser ask to sign in.
+ *
+ * Server components use `supabaseServerComponent()` in ./supabase-rsc instead,
+ * because cookies are read differently there.
+ */
+export const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+/**
+ * The parser service, deployed separately from this app.
  *
  * It has to be: a Next.js app and a Python function both claim `/api/*`, and
  * inside a single Vercel project Next wins -- requests never reach Python. Its

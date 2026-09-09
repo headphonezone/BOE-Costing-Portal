@@ -6,6 +6,18 @@ land, and model what-if scenarios against it.
 Everything on screen is derived from the Bill of Entry itself. You upload the
 ICEGATE PDF once; the portal reads it and does the rest.
 
+## Getting in
+
+**https://boe-costing-portal.vercel.app**
+
+Sign in with **Continue with Google**. There is no separate password to
+remember, and no account to create.
+
+Access is granted address by address. If you have not been added yet, Google
+will let you sign in and the portal will then tell you that you are not
+permitted — that is not a fault, it means an administrator has to add your
+address first. Ask, then sign in again.
+
 ## The three screens
 
 | Screen | What it is for |

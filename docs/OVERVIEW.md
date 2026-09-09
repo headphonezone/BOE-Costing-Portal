@@ -14,6 +14,19 @@ This is the short form. [`docs/WHITEPAPER.md`](WHITEPAPER.md) is the full
 technical document; [`docs/PARSER.md`](PARSER.md) is the field-by-field
 extraction reference.
 
+## Where it runs
+
+| | |
+| --- | --- |
+| Portal | **https://boe-costing-portal.vercel.app** |
+| Parser service | https://boe-costing-portal-backend.vercel.app |
+| Database, auth, storage | Supabase (Postgres 17) |
+
+Two Vercel projects from one repository, deployed separately because the
+portal is Next.js and the parser is Python. Both point at the same Supabase
+project. Sign-in is Google, restricted to addresses an administrator has
+granted access to.
+
 ## The six modules
 
 ```mermaid

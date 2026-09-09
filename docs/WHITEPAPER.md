@@ -524,10 +524,28 @@ not conventions.
 
 ### 10.3 Deployment
 
+| Component | Address | Runtime |
+| --- | --- | --- |
+| Portal | **https://boe-costing-portal.vercel.app** | Next.js 16 on Vercel |
+| Parser service | https://boe-costing-portal-backend.vercel.app | FastAPI on Vercel |
+| Database, auth, storage | Supabase, project `lqurlldfpesbjhrkkczv` | Postgres 17 |
+
 Two Vercel projects from one repository: the portal with root directory
 `frontend` and zero configuration, the parser with root directory `parser`,
 framework **Other**, and its own `vercel.json`. Set the portal's API base URL
 to the parser's address and the parser's allowed origins to the portal's.
+
+They are two projects rather than one because a single project cannot serve
+both a Next.js app and a Python function under one `/api` namespace: the
+runtimes contend for the same routes, and the request reaches whichever the
+platform resolves first.
+
+Sign-in is Google OAuth through Supabase Auth, so the portal's callback
+(`/auth/callback`) must appear in the Supabase redirect allowlist for **every**
+origin it is served from — production and local alike. An origin that is
+missing completes the whole round trip at Google and only then fails, on the
+way back, which makes it look like a credentials problem rather than a
+configuration one.
 
 The parser also ships a Dockerfile and runs as a container anywhere, which is
 the route to take when a Bill of Entry is large enough to press against a

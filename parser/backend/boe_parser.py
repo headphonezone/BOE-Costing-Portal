@@ -1543,7 +1543,165 @@ def group_pages_by_invoice(pages_text: list) -> list:
     return blocks
 
 
-def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None) -> tuple[dict, list[dict]]:
+# ---------------------------------------------------------------------------
+# The Part-II valuation row
+#
+# "1.INV VALUE 2.FREIGHT 3.INSURANCE 4.HSS. 5.LOADING 6.COMMN 7.PAY TERMS"
+# prints as one line whose blank columns simply disappear, so the Nth token is
+# not the Nth column. Read as text it therefore needs an anchor, and the old
+# anchor was the literal "DP" of 7.PAY TERMS -- which is also "OTH" and "FC"
+# on other BOEs, and which moves out of reach entirely when freight or
+# insurance is blank (on CIF and C&F terms they are already in the price).
+# That is why invoice value, freight and insurance always went missing as a
+# set: one unmatched pattern dropped all three.
+#
+# The x-coordinates do not move. Every BOE in the archive lays these columns
+# out identically and the "14.Cur" row underneath aligns to the same bands,
+# which is what says which currency each figure is in. So the row is read by
+# position and token order is ignored.
+_VAL_BANDS = (
+    ('inv',         0.0, 110.0),
+    ('freight',   110.0, 160.0),
+    ('insurance', 160.0, 215.0),
+    ('hss',       215.0, 255.0),
+    ('loading',   255.0, 290.0),
+)
+
+_CURRENCY_CODES = frozenset({
+    'INR', 'USD', 'EUR', 'GBP', 'JPY', 'CNY', 'HKD', 'SGD', 'AUD', 'CHF',
+    'CAD', 'AED', 'KRW', 'THB', 'MYR', 'SEK', 'DKK', 'NOK', 'NZD',
+})
+
+
+def _valuation_band(x0: float) -> str | None:
+    for name, lo, hi in _VAL_BANDS:
+        if lo <= x0 < hi:
+            return name
+    return None
+
+
+def _words_by_row(words: list, tol: float = 2.5) -> list:
+    """Groups words into visual rows by their `top`, left to right."""
+    rows = []
+    for w in sorted(words, key=lambda w: (w['top'], w['x0'])):
+        if rows and abs(w['top'] - rows[-1][0]) <= tol:
+            rows[-1][1].append(w)
+        else:
+            rows.append([w['top'], [w]])
+    return rows
+
+
+def parse_valuation_row(page) -> dict | None:
+    """
+    Reads the valuation row off a Part-II page by column position.
+
+    Returns {'values': {...}, 'currencies': {...}} keyed by column name, or
+    None when this page carries no valuation row. A value is a float, or a
+    string like "20%" when the form states a rate instead of an amount.
+    """
+    strip_watermark(page)
+    words = page.extract_words()
+
+    header = [w for w in words if w['text'].startswith('1.INV')]
+    if not header:
+        return None
+    y = header[0]['top']
+
+    values, currencies = {}, {}
+    # The value row, then "14.Cur" beneath it; a couple of spare rows because
+    # 15.Term can be interleaved on some layouts.
+    nearby = [r for r in _words_by_row(words) if y + 4 < r[0] < y + 40][:4]
+    for _top, row in nearby:
+        is_currency_row = any(w['text'].startswith('14.Cur') for w in row)
+        for w in row:
+            band = _valuation_band(w['x0'])
+            if band is None:
+                continue
+            text = w['text']
+            if is_currency_row:
+                # 15.Term ("FOB", "CIF", "CF") sits in the same band as the
+                # invoice currency, so only real currency codes are taken.
+                if text in _CURRENCY_CODES and band not in currencies:
+                    currencies[band] = text
+            elif band not in values:
+                plain = text.replace(',', '')
+                if re.fullmatch(r'\d*\.?\d+', plain):
+                    values[band] = float(plain)
+                elif re.fullmatch(r'[\d.]+%', plain):
+                    values[band] = plain
+
+    if 'inv' not in values:
+        return None
+    return {'values': values, 'currencies': currencies}
+
+
+def _resolve_valuation(row: dict, exchange_rate: float, rates: dict | None,
+                       misc_raw: float, assess_value: float | None) -> dict:
+    """
+    Turns a positional read into the figures the rest of the parser wants,
+    in rupees.
+
+    Two things the form never states outright have to be inferred:
+
+      * Misc charges carry no currency marker anywhere on the page. Some BOEs
+        state them in rupees, some in the invoice currency, and nothing on the
+        form distinguishes the two. The only arbiter is the form's own
+        14.ASS. VALUE, so both readings are tried and the one that agrees with
+        it wins. The invoice-currency reading is tried first, so a BOE that
+        reconciles either way keeps the figure it has always had.
+
+      * Freight is sometimes a rate rather than an amount -- the notional
+        air-freight rule, printed as "20%" -- and it is charged on the invoice
+        value plus misc charges, not on the invoice value alone.
+    """
+    rate_table = rates or {'INR': 1.0, 'USD': exchange_rate}
+    values, currencies = row['values'], row['currencies']
+
+    inv_value = values['inv']
+    inv_inr = _to_inr(inv_value, currencies.get('inv', 'USD'), rate_table)
+
+    def settle(misc_inr: float) -> tuple[float, float, float]:
+        raw = values.get('freight', 0.0)
+        if isinstance(raw, str):
+            freight = (inv_inr + misc_inr) * float(raw.rstrip('%')) / 100
+        else:
+            freight = _to_inr(raw, currencies.get('freight', 'INR'), rate_table)
+
+        raw = values.get('insurance', 0.0)
+        if isinstance(raw, str):
+            insurance = inv_inr * float(raw.rstrip('%')) / 100
+        else:
+            insurance = _to_inr(raw, currencies.get('insurance', 'INR'), rate_table)
+
+        total = inv_inr + freight + insurance + misc_inr
+        # 4.HSS and 5.LOADING, when given as a rate, load the whole
+        # CIF-plus-misc total -- a high-sea-sale margin, typically 2%.
+        for column in ('hss', 'loading'):
+            pct = values.get(column)
+            if isinstance(pct, str):
+                total *= 1 + float(pct.rstrip('%')) / 100
+        return freight, insurance, total
+
+    candidates = [round(misc_raw * exchange_rate, 2), round(misc_raw, 2)]
+    misc_inr = candidates[0]
+    freight, insurance, _ = settle(misc_inr)
+    if assess_value is not None:
+        for candidate in candidates:
+            f, i, total = settle(candidate)
+            if abs(total - assess_value) <= 2.0:
+                misc_inr, freight, insurance = candidate, f, i
+                break
+
+    return {
+        'inv_value': inv_value,
+        'freight': round(freight, 2),
+        'insurance': round(insurance, 2),
+        'misc_charges_inr': misc_inr,
+    }
+
+
+def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None,
+                valuation: dict | None = None) -> tuple[dict, list[dict]]:
     """
     Parses ONE invoice block's text: header meta (invoice no/date, valuation,
     misc charges) plus its item table.
@@ -1559,7 +1717,11 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
     # depending on which invoice this is — the old regex required both a
     # literal leading "1" and a purely-numeric invoice number, so it never
     # matched invoice 2 at all.
-    m = re.search(r'\n(\d)\s+([A-Z]{2,}\d{4,}|\d{6,})\s*\n', page2_text)
+    # A trailing suffix is allowed ("202608857-A"): without it the second
+    # invoice of BE 3317056 registered no invoice number at all, which sent
+    # the caller to its page-1 fallback and stamped invoice 1's value onto
+    # invoice 2's freight and insurance.
+    m = re.search(r'\n(\d)\s+((?:[A-Z]{2,}\d{4,}|\d{6,})[A-Z0-9/-]*)\s*\n', page2_text)
     if m:
         meta['inv_no'] = m.group(2)
 
@@ -1567,10 +1729,39 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
     if m:
         meta['inv_date'] = m.group(1)
 
-    # FIX: freight/insurance can have decimal points (e.g. "211716.59"), but
-    # the old pattern required the 2nd/3rd number groups to be pure digits,
-    # so any decimal freight/insurance value broke the whole match and
-    # freight/insurance/inv_value were silently left unset.
+    # FIX: verified against real pdfplumber output — the "13.MISC CHARGE
+    # 14.ASS. VALUE" label line is immediately followed by its own value
+    # line, e.g. "E 1690 1595837.33" (the leading "E" is bleed-through from
+    # a sideways section-label glyph; not always present). When there is no
+    # misc charge, that value line holds just the assess value on its own,
+    # e.g. "E 84966.62". So: take the line right after the label, strip any
+    # leading letter, and split on whitespace — two numbers means
+    # [misc, assess value]; one number means no misc charge (stays 0).
+    #
+    # Read before the valuation row because the assessable value is what
+    # settles the misc-charge currency. See _resolve_valuation().
+    misc_raw = 0.0
+    assess_value = None
+    m = re.search(r'14\.ASS\. VALUE\s*\n\s*[A-Z]?\s*([\d.\s]+?)\s*\n', page2_text)
+    if m:
+        nums = m.group(1).split()
+        if len(nums) >= 2:
+            misc_raw = float(nums[0])
+            assess_value = float(nums[1])
+        elif len(nums) == 1:
+            assess_value = float(nums[0])
+
+    meta['misc_charges_inr'] = round(misc_raw * exchange_rate, 2)
+
+    if valuation is not None:
+        meta.update(_resolve_valuation(valuation, exchange_rate, rates,
+                                       misc_raw, assess_value))
+        return meta, _parse_items(page2_text)
+
+    # Fallback for a caller with no page object to hand (the positional read
+    # needs one). This is the original text-anchored pattern: it only matches
+    # when all three columns are filled and 7.PAY TERMS reads "DP", which is
+    # the common case but by no means all of them.
     m = re.search(r'([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+DP', page2_text)
     if m:
         inv_value = float(m.group(1))
@@ -1604,21 +1795,11 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
         meta['freight'] = freight
         meta['insurance'] = insurance
 
-    # FIX: verified against real pdfplumber output — the "13.MISC CHARGE
-    # 14.ASS. VALUE" label line is immediately followed by its own value
-    # line, e.g. "E 1690 1595837.33" (the leading "E" is bleed-through from
-    # a sideways section-label glyph; not always present). When there is no
-    # misc charge, that value line holds just the assess value on its own,
-    # e.g. "E 84966.62". So: take the line right after the label, strip any
-    # leading letter, and split on whitespace — two numbers means
-    # [misc, assess value]; one number means no misc charge (stays 0).
-    meta['misc_charges_inr'] = 0.0
-    m = re.search(r'14\.ASS\. VALUE\s*\n\s*[A-Z]?\s*([\d.\s]+?)\s*\n', page2_text)
-    if m:
-        nums = m.group(1).split()
-        if len(nums) >= 2:
-            meta['misc_charges_inr'] = round(float(nums[0]) * exchange_rate, 2)
+    return meta, _parse_items(page2_text)
 
+
+def _parse_items(page2_text: str) -> list[dict]:
+    """The Part-II item table for one invoice block."""
     items = []
     # FIX: unit price / quantity / amount previously required at least one
     # digit before the decimal point ([\d]+\.[\d]...). Values under 1 are
@@ -1679,7 +1860,11 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
                     # invoice valuation summary line (inv_value/freight/
                     # insurance ... DP) that follows the item table -- never
                     # part of a description.
-                    or re.match(r'^[\d.]+\s+[\d.]+\s+[\d.]+\s+DP\b', line)
+                    # 7.PAY TERMS is "DP" on most BOEs but also "OTH" and
+                    # "FC", and a blank freight or insurance column drops a
+                    # number from the line, so this matches the row by shape
+                    # rather than by its trailing token.
+                    or re.match(r'^[\d.]+(\s+[\d.%]+){1,5}\s+(?:DP|OTH|FC)\b', line)
                     # page furniture. The last item on a page has no next-item
                     # line to stop at, so without these the footer ran straight
                     # into its description ("Playmate 2 Remote Page 2 Of 7").
@@ -1697,10 +1882,11 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
         items.append({'itemsn': sno, 'desc': desc, 'price': float(m.group(3)), 'qty': float(m.group(4))})
 
     items.sort(key=lambda x: x['itemsn'])
-    return meta, items
+    return items
 
 
-def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict | None = None):
+def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict | None = None,
+                    valuations: list | None = None):
     """
     Groups pages by invoice, parses each invoice block's items, and assigns
     a single running `global_sno` across all invoices (used for Excel row
@@ -1714,10 +1900,20 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict
     all_items = []
     per_invoice_meta = {}
     global_sno = 0
+    # Blocks are contiguous slices of pages_text_after_p1 taken in order, so a
+    # running offset lines each one up with its page objects.
+    offset = 0
 
     for invidx, pages in blocks:
         block_text = '\n'.join(pages)
-        meta, items = parse_page2(block_text, exchange_rate, rates)
+        valuation = None
+        if valuations:
+            for v in valuations[offset:offset + len(pages)]:
+                if v:
+                    valuation = v
+                    break
+        offset += len(pages)
+        meta, items = parse_page2(block_text, exchange_rate, rates, valuation)
         meta['supplier'] = parse_supplier(block_text)
         per_invoice_meta[invidx] = (meta, len(items))
 

@@ -85,6 +85,9 @@ def _parse_boe_pdf(pdf_bytes: bytes) -> dict:
         # reads the page as it was actually printed. See strip_watermark().
         for p in pdf.pages:
             pages_text.append(bp.extract_clean_text(p))
+        # The Part-II valuation row is read by column position, which needs
+        # the page objects, so it happens here while the document is open.
+        valuations = [bp.parse_valuation_row(p) for p in pdf.pages]
 
     header = bp.parse_header(pages_text[0])
     header['hawb_no'] = bp.parse_hawb(pages_text[0])
@@ -94,12 +97,17 @@ def _parse_boe_pdf(pdf_bytes: bytes) -> dict:
     # so the whole rate table goes through, not just the USD rate.
     rates = bp.parse_exchange_rates(pages_text[0])
 
-    meta, items = bp.parse_all_items(pages_text[1:], ex_rate, rates)
+    meta, items = bp.parse_all_items(pages_text[1:], ex_rate, rates, valuations[1:])
 
     inv_summary_list = bp.parse_invoice_summary_multi(pages_text[0])
     if inv_summary_list and not meta.get('inv_no'):
         meta['inv_no'] = inv_summary_list[0]['inv_no']
-        meta['inv_value'] = inv_summary_list[0]['inv_value']
+        # The page-1 summary always describes invoice 1, but `meta` belongs to
+        # whichever invoice block had the most items. Overwriting a value the
+        # block already read mixed invoice 1's figure with invoice 2's freight
+        # and insurance, so this only fills a genuine gap.
+        if meta.get('inv_value') is None:
+            meta['inv_value'] = inv_summary_list[0]['inv_value']
 
     licences = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:

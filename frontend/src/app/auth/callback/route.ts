@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse, type NextRequest } from "next/server";
+import { readableAuthError } from "@/lib/auth-errors";
 
 /**
  * Where Google sends the reader back.
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
   const oauthError = searchParams.get("error_description") || searchParams.get("error");
   if (oauthError) {
     return NextResponse.redirect(
-      `${origin}/sign-in?error=${encodeURIComponent(oauthError)}`
+      `${origin}/sign-in?error=${encodeURIComponent(readableAuthError(oauthError))}`
     );
   }
 
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     return NextResponse.redirect(
-      `${origin}/sign-in?error=${encodeURIComponent(error.message)}`
+      `${origin}/sign-in?error=${encodeURIComponent(readableAuthError(error.message))}`
     );
   }
 

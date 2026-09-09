@@ -3,6 +3,7 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { readableAuthError } from "@/lib/auth-errors";
 
 /**
  * Sign-in.
@@ -40,7 +41,7 @@ function SignInForm() {
       },
     });
     if (error) {
-      setError(error.message);
+      setError(readableAuthError(error.message));
       setBusy(false);
     }
     // On success the browser leaves for Google; nothing after this runs.

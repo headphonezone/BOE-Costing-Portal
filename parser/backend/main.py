@@ -100,7 +100,13 @@ def _parse_boe_pdf(pdf_bytes: bytes) -> dict:
     meta, items = bp.parse_all_items(pages_text[1:], ex_rate, rates, valuations[1:])
 
     inv_summary_list = bp.parse_invoice_summary_multi(pages_text[0])
-    if inv_summary_list and not meta.get('inv_no'):
+    invoice_count = meta.get('invoice_count', 1)
+    if invoice_count > 1 and len(inv_summary_list) == invoice_count:
+        # Page 1 lists every invoice number reliably; the invoice pages do not
+        # always ("SO1359421_1", "XSDD-20260112-001" slip past the block
+        # pattern), so a multi-invoice BOE takes its numbers from the summary.
+        meta['inv_no'] = ', '.join(i['inv_no'] for i in inv_summary_list)
+    elif inv_summary_list and not meta.get('inv_no'):
         meta['inv_no'] = inv_summary_list[0]['inv_no']
         # The page-1 summary always describes invoice 1, but `meta` belongs to
         # whichever invoice block had the most items. Overwriting a value the

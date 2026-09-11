@@ -42,7 +42,7 @@ export default async function BoePage({
 
   const facts: Array<[string, string]> = [
     ["Supplier", boe.supplier_name ?? "—"],
-    ["Invoice", boe.inv_no ?? "—"],
+    [boe.inv_no?.includes(",") ? "Invoices" : "Invoice", boe.inv_no ?? "—"],
     ["Invoice date", date(boe.inv_date)],
     ["BE date", date(boe.be_date)],
     ["AWB / HAWB", boe.hawb_no ?? "—"],
@@ -59,7 +59,7 @@ export default async function BoePage({
         <div>
           <h1 className="text-2xl font-bold tracking-tight">BE {boe.be_no}</h1>
           <p className="mt-1 text-sm text-muted">
-            {boe.supplier_name ?? "Unknown supplier"} · Invoice {boe.inv_no ?? "—"} ·{" "}
+            {boe.supplier_name ?? "Unknown supplier"} · {boe.inv_no?.includes(",") ? "Invoices" : "Invoice"} {boe.inv_no ?? "—"} ·{" "}
             {date(boe.be_date)}
           </p>
         </div>

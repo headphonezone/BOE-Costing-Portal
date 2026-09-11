@@ -1487,7 +1487,11 @@ def parse_invoice_summary_multi(page1_text: str) -> list:
         block = block[:end]
 
     for line in block.split('\n'):
-        m = re.search(r'(\d)\s+(\S+)\s+([\d,]+\.?\d*)\s+([A-Z]{3})\b', line)
+        # Anchored on the amount and currency at the end of the line, not on
+        # the invoice number being one word: numbers can contain a space --
+        # BE 9288307 prints "20260507FV -1" -- and the one-word pattern dropped
+        # that invoice from the summary altogether.
+        m = re.match(r'\s*(\d{1,2})\s+(.+?)\s+([\d,]+\.?\d*)\s+([A-Z]{3})\s*$', line)
         if m:
             invoices.append({
                 'sno': int(m.group(1)),
@@ -1697,6 +1701,7 @@ def _resolve_valuation(row: dict, exchange_rate: float, rates: dict | None,
         'freight': round(freight, 2),
         'insurance': round(insurance, 2),
         'misc_charges_inr': misc_inr,
+        'inv_currency': currencies.get('inv', 'USD'),
     }
 
 
@@ -1794,6 +1799,7 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
         meta['inv_value'] = inv_value
         meta['freight'] = freight
         meta['insurance'] = insurance
+        meta['inv_currency'] = cur.group(1) if cur else None
 
     return meta, _parse_items(page2_text)
 
@@ -1893,7 +1899,8 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict
     placement) while keeping each item's original (invsno, itemsn) pair
     (used to join duty / BCD data, since Part III/IV also key by INVSNO).
 
-    Returns: (meta_of_largest_invoice, all_items)
+    Returns: (meta for the whole BOE, all_items). With several invoices the
+    rupee charges are summed across them -- see the note at the end.
     """
     blocks = group_pages_by_invoice(pages_text_after_p1)
 
@@ -1923,18 +1930,44 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict
             it['invsno'] = invidx
             all_items.append(it)
 
-    # Use the invoice with the most items as the "primary" one for the
-    # single-invoice header fields on C-SHEET (supplier, invoice no/value,
-    # freight, insurance). Adjust this choice if your workflow should
-    # instead always use invoice 1, or should produce one C-SHEET per
-    # invoice.
-    if per_invoice_meta:
-        primary_idx = max(per_invoice_meta, key=lambda k: per_invoice_meta[k][1])
-        primary_meta = per_invoice_meta[primary_idx][0]
-    else:
-        primary_meta = {}
+    # Every invoice on a BOE brings its own freight, insurance and misc
+    # charges, and every invoice's items are costed. The record and the
+    # C-SHEET header describe the whole BOE, so they carry the sum. This used
+    # to keep only the invoice with the most items, which left the other
+    # invoices' charges out of the expense pool while their items stayed in
+    # it -- under-costing every line. BE 3526813 lost Rs 14,984.52 of misc
+    # charges that way; across the archive it was Rs 5.8 lakh, and on the
+    # worst BOE most of the pool.
+    #
+    # Each invoice's charges were already put into rupees against that
+    # invoice's own assessable value (misc currency is settled per invoice),
+    # so they sum directly. Invoice value stays in its own currency, so it is
+    # summed only when every invoice shares one; otherwise it stays the
+    # largest invoice's figure rather than adding dollars to euros.
+    metas = [per_invoice_meta[k][0] for k in sorted(per_invoice_meta, key=lambda k: (k is None, k or 0))]
+    if not metas:
+        return {}, all_items
+    if len(metas) == 1:
+        return metas[0], all_items
 
-    return primary_meta, all_items
+    primary = max(per_invoice_meta.values(), key=lambda m: m[1])[0]
+    combined = dict(primary)  # dates and anything not summed: the largest invoice
+    for key in ('freight', 'insurance', 'misc_charges_inr'):
+        combined[key] = round(sum(m.get(key) or 0 for m in metas), 2)
+
+    values = [m.get('inv_value') for m in metas]
+    if len({m.get('inv_currency') for m in metas}) == 1 and None not in values:
+        combined['inv_value'] = round(sum(values), 2)
+
+    numbers = [m['inv_no'] for m in metas if m.get('inv_no')]
+    if numbers:
+        combined['inv_no'] = ', '.join(numbers)
+    suppliers = list(dict.fromkeys(m['supplier'] for m in metas if m.get('supplier')))
+    if suppliers:
+        combined['supplier'] = ' / '.join(suppliers)
+
+    combined['invoice_count'] = len(metas)
+    return combined, all_items
 
 
 # Unit-of-quantity codes as they appear in the item and Part III tables. A row

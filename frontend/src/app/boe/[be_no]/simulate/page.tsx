@@ -48,7 +48,7 @@ export default async function SimulatePage({
       <div className="mt-3 mb-6">
         <h1 className="text-2xl font-bold tracking-tight">Simulated costing</h1>
         <p className="mt-1 text-sm text-muted">
-          {boe.supplier_name ?? "Unknown supplier"} · Invoice {boe.inv_no ?? "—"} ·{" "}
+          {boe.supplier_name ?? "Unknown supplier"} · {boe.inv_no?.includes(",") ? "Invoices" : "Invoice"} {boe.inv_no ?? "—"} ·{" "}
           {date(boe.be_date)} · {items.length} items. Every scenario starts as a copy of the
           actual record; only what you change moves.
         </p>

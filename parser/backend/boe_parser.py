@@ -2878,8 +2878,16 @@ def _fill_d_details(wb, items, duties, bcd_forgone, licences):
             _style(dd.cell(row=r, column=col), fill=BRK_FILL, border=_all_border())
         dd.row_dimensions[r].height = 17
 
+    # Clears what the template leaves below the totals block. The licence list
+    # in H-J runs down from row 10 on its own, independent of the items, so on
+    # a BOE with several licences per item it reaches this band -- and this
+    # used to wipe every licence row inside it: BE 3702038 lost 6 of its 29,
+    # Rs 280,480.50 of debits gone from the list. Rows the list occupies are
+    # left alone.
     for _r in range(breakdown_row + 3, breakdown_row + 15):
         for _c in range(2, 11):
+            if _c >= 8 and _r < right_row:
+                continue
             c = dd.cell(row=_r, column=_c)
             c.value = None; c.fill = PatternFill(fill_type=None); c.border = Border()
 

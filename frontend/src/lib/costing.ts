@@ -282,6 +282,8 @@ export type CostRow = {
   invsno: number;
   itemsn: number;
   description: string;
+  /** HSN (CTH) code. A duplicated row is a copy of its source item, so it carries that item's. */
+  cth: string | null;
 
   qty: number;
   unitPriceUsd: number;
@@ -511,6 +513,7 @@ export function computeCosting({
       invsno: r.item.invsno,
       itemsn: r.item.itemsn,
       description: r.item.description ?? "",
+      cth: r.item.cth ?? null,
       qty: r.qty,
       unitPriceUsd: r.unitPriceUsd,
       isFoc: r.isFoc,

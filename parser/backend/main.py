@@ -247,6 +247,9 @@ class SimulationItem(BaseModel):
     sws: float = 0
     igst: float = 0
     assess_value: float | None = None
+    # The row's HSN, which the portal knows even for a duplicated row: a
+    # duplicate is built as a copy of its source item.
+    cth: str | None = None
 
 
 class SimulationExport(BaseModel):
@@ -295,12 +298,16 @@ def download_simulation_excel(be_no: str, sim: SimulationExport):
     # D-DETAILS row 10+i, so the numbering has to be a contiguous 1..n in the
     # order the rows are shown. Duplicated scenario rows would otherwise
     # leave gaps and shift every duty reference below them.
+    # HSN is a property of the goods, so the BOE is the fallback whenever a
+    # row arrives without one.
+    hsn = {(r['invsno'], r['itemsn']): r.get('cth') for r in detail['items']}
     items, duties, assess_values, foc_keys = [], {}, {}, set()
     for i, it in enumerate(sim.items, start=1):
         key = (it.invsno, it.itemsn)
         items.append({
             'global_sno': i, 'invsno': it.invsno, 'itemsn': it.itemsn,
             'desc': it.description, 'price': it.unit_price_usd, 'qty': it.qty,
+            'cth': it.cth or hsn.get((it.invsno, it.itemsn)),
         })
         duties[key] = {'bcd': it.bcd, 'sws': it.sws, 'igst': it.igst}
         if it.assess_value is not None:
@@ -370,6 +377,7 @@ def download_excel(be_no: str):
     items = [{
         'global_sno': it['global_sno'], 'invsno': it['invsno'], 'itemsn': it['itemsn'],
         'desc': it['description'], 'price': it['unit_price_usd'], 'qty': it['qty'],
+        'cth': it.get('cth'),
     } for it in detail['items']]
     duties = {(it['invsno'], it['itemsn']): {
         'bcd': it['bcd'], 'sws': it['sws'], 'igst': it['igst'],

@@ -1821,13 +1821,24 @@ def _parse_items(page2_text: str) -> list[dict]:
     # quoted in UNT (e.g. Soloist/Conductor Voyager amp units) had those
     # rows silently dropped while PCS-quoted items on the same page parsed
     # fine, making it look like only "some" items came through.
+    #
+    # The unit is any three capitals, not a list. A list is how items kept
+    # vanishing: UNT was missing once, and PRS, KGS and MTR were missing until
+    # 2026-09 -- 19 items across four BOEs dropped without a trace, their duty
+    # with them. The line's shape (S.NO, an 8-digit CTH, two 4-6 place
+    # decimals, the unit, the amount) is specific enough that a wildcard unit
+    # matches nothing else: across the archive it finds every item line and
+    # only item lines.
+    #
+    # The CTH is captured too. It is the item's HSN code, which the E-Way Bill
+    # tab needs, and it was being read past and thrown away.
     item_pat = re.compile(
-        r'^[A-Z\s]{0,3}(\d{1,2})\s+[\dOI]{7,9}\s+(.+?)\s+([\d]*\.[\d]{4,6})\s+([\d]*\.[\d]{4,6})\s+(?:PCS|SET|NOS|UNT)\s+([\d]*\.[\d]+)',
+        r'^[A-Z\s]{0,3}(\d{1,2})\s+([\dOI]{7,9})\s+(.+?)\s+([\d]*\.[\d]{4,6})\s+([\d]*\.[\d]{4,6})\s+([A-Z]{3})\s+([\d]*\.[\d]+)',
         re.MULTILINE
     )
     for m in item_pat.finditer(page2_text):
         sno = int(m.group(1))
-        desc = re.sub(r'\s+', ' ', m.group(2)).strip()
+        desc = re.sub(r'\s+', ' ', m.group(3)).strip()
         # NOTE: a lone capital used to be stripped here as watermark bleed.
         # strip_watermark() now removes bleed by character size, before words
         # are ever formed, and stripping lone capitals destroys real ones: it
@@ -1885,7 +1896,13 @@ def _parse_items(page2_text: str) -> list[dict]:
                            ('HEADPHYONE', 'HEADPHONE'), ('BLYACK', 'BLACK')]:
                 combined = combined.replace(_b, _g)
             desc = combined
-        items.append({'itemsn': sno, 'desc': desc, 'price': float(m.group(3)), 'qty': float(m.group(4))})
+        items.append({
+            'itemsn': sno, 'desc': desc, 'price': float(m.group(4)), 'qty': float(m.group(5)),
+            # The code column occasionally carries a letter for a digit
+            # ("8518302O"); the HSN is digits only.
+            'cth': m.group(2).replace('O', '0').replace('I', '1'),
+            'uqc': m.group(6),
+        })
 
     items.sort(key=lambda x: x['itemsn'])
     return items
@@ -1972,7 +1989,9 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict
 
 # Unit-of-quantity codes as they appear in the item and Part III tables. A row
 # carrying one of these is a quantity row.
-_UQC_CODES = frozenset({'PCS', 'SET', 'NOS', 'UNT', 'KGS', 'MTR', 'LTR', 'SQM', 'CBM', 'GMS', 'TON', 'DOZ'})
+# PRS (pairs) added 2026-09: without it, a PRS item's quantity row could be
+# taken for its assessable value, the failure the skip below exists to stop.
+_UQC_CODES = frozenset({'PCS', 'SET', 'NOS', 'UNT', 'KGS', 'MTR', 'LTR', 'SQM', 'CBM', 'GMS', 'TON', 'DOZ', 'PRS'})
 
 
 def extract_assess_values_from_pages(pdf_pages) -> dict:
@@ -2287,7 +2306,7 @@ def fill_excel(header: dict, meta: dict, items: list, duties: dict,
                 bcd_forgone: dict, licences: list, assess_values: dict = None,
                 variable_fields: dict = None, options: dict = None) -> bytes:
     """
-    Renders the C-SHEET / D-DETAILS workbook.
+    Renders the C-SHEET / D-DETAILS / Eway bill workbook.
 
     `options` carries the few things a simulation needs that an actual BOE
     never does. Absent, this behaves exactly as it always has:
@@ -2303,6 +2322,7 @@ def fill_excel(header: dict, meta: dict, items: list, duties: dict,
     _fill_c_sheet(wb, header, meta, items, duties, assess_values or {},
                   variable_fields or {}, options or {})
     _fill_d_details(wb, items, duties, bcd_forgone, licences)
+    _fill_eway_bill(wb, items, assess_values or {}, options or {})
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -2597,6 +2617,91 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         _st(c, font=Font(name='Calibri', bold=True, size=10), fill=SUM_FILL,
             align=CENTER if col in [1, 2, 3] else RIGHT, border=_mb(), num_fmt=num)
     cs.row_dimensions[total_row].height = 20
+
+
+def _fill_eway_bill(wb, items, assess_values, options):
+    """
+    The Eway bill tab: one row per item, laid out the way the logistics team
+    drew it -- HSN, quantity, value, duty and IGST -- with a check that each
+    line's IGST at 18% comes back to what customs actually charged.
+
+    Every figure is a formula into C-SHEET and D-DETAILS rather than a copied
+    number, so an edit on C-SHEET flows through here as it does everywhere
+    else in the workbook. Rows line up by item number: C-SHEET puts item n on
+    row 11+n and D-DETAILS on row 9+n, in both the actual and the simulation
+    workbook (the simulation banner sits in A10 and moves nothing).
+
+    18% is the team's own figure and holds for 1,841 of the 1,842 valued items
+    on file; the exception, a 5% shipping box, is exactly what "GST Diff" is
+    there to catch. In a simulation, column I holds the scenario's IGST rather
+    than the BOE's, and is labelled so.
+    """
+    from openpyxl.styles import Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet('Eway bill')
+    simulated = bool(options.get('title'))
+    headers = ['SI NO', 'HSN code', 'Item name', 'Qty', 'Rate per pc',
+               'total assessable value', 'Duty', 'Igst calculated',
+               'IGST in simulation' if simulated else 'actual in IGST BOE', 'GST Diff']
+    widths = [6, 11, 42, 7, 12, 20.6, 13, 14, 17, 14]
+
+    thin = Side(style='thin', color='000000')
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    head = Font(name='Calibri', size=11, bold=True)
+    body = Font(name='Calibri', size=11)
+    fill = PatternFill('solid', fgColor='00B0F0')
+    money = '#,##0.00'
+
+    for col, (text, width) in enumerate(zip(headers, widths), start=1):
+        c = ws.cell(row=1, column=col, value=text)
+        c.font, c.fill, c.border = head, fill, box
+        ws.column_dimensions[get_column_letter(col)].width = width
+
+    ordered = sorted(items, key=lambda it: it['global_sno'])
+    for it in ordered:
+        n = it['global_sno']
+        r, cs, dd = 1 + n, 11 + n, 9 + n
+        hsn = it.get('cth') or None
+        row = [
+            n,
+            int(hsn) if hsn and hsn.isdigit() and not hsn.startswith('0') else hsn,
+            f"='C-SHEET'!B{cs}",
+            f"='C-SHEET'!C{cs}",
+            # Per piece: the line's value over its quantity. A zero quantity
+            # would otherwise divide by zero and take the column total with it.
+            f"=IF(D{r}=0,0,F{r}/D{r})",
+            # The line's value is customs' own assessable value for the item
+            # (C-SHEET column P), so 18% of value plus duty lands on the BOE's
+            # IGST line by line -- including on a multi-invoice BOE, where the
+            # portal's pooled expense share would drift from customs' per-invoice
+            # one. A row customs never assessed (a duplicated simulation row)
+            # has no such figure and falls back to goods plus expense share.
+            (f"='C-SHEET'!P{cs}" if (it['invsno'], it['itemsn']) in assess_values
+             else f"='C-SHEET'!F{cs}+'C-SHEET'!H{cs}"),
+            f"='C-SHEET'!G{cs}",
+            f"=(G{r}+F{r})*18%",
+            f"='D-DETAILS'!E{dd}",
+            f"=I{r}-H{r}",
+        ]
+        for col, value in enumerate(row, start=1):
+            c = ws.cell(row=r, column=col, value=value)
+            c.font, c.border = body, box
+            if col >= 5:
+                c.number_format = money
+
+    total = 2 + len(ordered)
+    last = total - 1
+    ws.cell(row=total, column=1, value='TOTAL')
+    for col in (4, 6, 7, 8, 9, 10):
+        letter = get_column_letter(col)
+        ws.cell(row=total, column=col, value=f"=SUM({letter}2:{letter}{last})")
+    for col in range(1, 11):
+        c = ws.cell(row=total, column=col)
+        c.font, c.border = head, box
+        if col >= 5:
+            c.number_format = money
+    ws.freeze_panes = 'A2'
 
 
 def _fill_d_details(wb, items, duties, bcd_forgone, licences):

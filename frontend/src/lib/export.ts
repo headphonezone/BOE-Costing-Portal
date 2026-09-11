@@ -37,6 +37,7 @@ type SimulationPayload = {
     sws: number;
     igst: number;
     assess_value: number | null;
+    cth: string | null;
   }>;
 };
 
@@ -71,6 +72,8 @@ export function toSimulationPayload(result: CostingResult): SimulationPayload {
       // A duplicated row was never assessed by customs, so there is nothing
       // to reconcile it against -- null, not a misleading zero.
       assess_value: r.isAdded ? null : r.assessValuePerBoe,
+      // For the workbook's Eway bill tab.
+      cth: r.cth,
     })),
   };
 }

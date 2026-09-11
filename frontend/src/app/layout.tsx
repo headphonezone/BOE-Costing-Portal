@@ -14,7 +14,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Null on the sign-in page, which is the only route the proxy lets through
   // without a session. Everywhere else this is a real user.
   const user = await currentUser();
-  // Signed in is not the same as allowed: any Google account can reach here.
+  // Signed in is not the same as allowed: removing an address does not end the
+  // sessions already issued to it, so a session can outlive its access.
   const member = user ? await isMember() : true;
   const admin = member && user ? await isAdmin() : false;
 
@@ -53,8 +54,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               but that address has not been granted access to the portal.
             </p>
             <p className="mt-4 text-sm text-muted">
-              Ask an administrator to add it. Signing in with a different Google
-              account will not help unless that address has been granted access.
+              Ask an administrator to add it.
             </p>
           </main>
         ) : (

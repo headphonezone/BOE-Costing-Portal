@@ -78,8 +78,8 @@ export function AdminPanel({
       <section>
         <h2 className="text-sm font-semibold">Who has access</h2>
         <p className="mb-4 mt-1 max-w-prose text-sm text-muted">
-          Access is granted address by address. Anyone can sign in with Google;
-          only an address on this list sees anything at all.
+          Access is granted address by address. Only an address on this list
+          can sign in, and it can sign in as soon as it is added.
         </p>
 
         <form

@@ -15,7 +15,7 @@
  */
 export function readableAuthError(raw: string): string {
   if (/database error (saving|creating) new user/i.test(raw)) {
-    return "You are not permitted to use this portal. Access is granted by an administrator — ask to be added, then sign in again.";
+    return NOT_PERMITTED;
   }
   if (/provider is not enabled/i.test(raw)) {
     return "Google sign-in is not switched on for this portal yet. Tell an administrator.";
@@ -25,3 +25,7 @@ export function readableAuthError(raw: string): string {
   }
   return raw;
 }
+
+/** The refusal for an address that is not on the allowlist, however it is reached. */
+export const NOT_PERMITTED =
+  "You are not permitted to use this portal. Access is granted by an administrator — ask to be added, then sign in again.";

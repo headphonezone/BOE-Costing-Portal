@@ -271,6 +271,9 @@ class SimulationExport(BaseModel):
     clearance: float = 0
     other_charges: float = 0
     misc: float = 0
+    # The misc charge as the invoice stated it, so the workbook can convert it
+    # in Excel. Absent once a scenario types its own rupee figure.
+    misc_fc: float | None = None
     supplier_freight: float = 0
     bank_charges: float = 0
     own_bank_charges: float = 0
@@ -322,7 +325,7 @@ def download_simulation_excel(be_no: str, sim: SimulationExport):
     meta = {'supplier': boe.get('supplier_name'), 'inv_no': boe.get('inv_no'),
             'inv_value': boe.get('inv_value_usd'), 'inv_date': boe.get('inv_date'),
             'freight': sim.freight, 'insurance': sim.insurance,
-            'misc_charges_inr': sim.misc}
+            'misc_charges_inr': sim.misc, 'misc_charges_fc': sim.misc_fc}
 
     # Every scenario figure is deliberate, so all of them show as confirmed
     # rather than provisional -- the yellow/green shading on an actual sheet
@@ -398,7 +401,8 @@ def download_excel(be_no: str):
     meta = {'supplier': boe.get('supplier_name'), 'inv_no': boe.get('inv_no'),
             'inv_value': boe.get('inv_value_usd'), 'inv_date': boe.get('inv_date'),
             'freight': boe.get('freight_inr'), 'insurance': boe.get('insurance_inr'),
-            'misc_charges_inr': boe.get('misc_charges_inr')}
+            'misc_charges_inr': boe.get('misc_charges_inr'),
+            'misc_charges_fc': boe.get('misc_charges_fc')}
 
     vf = detail['variable_fields'] or {}
     variable_fields = {

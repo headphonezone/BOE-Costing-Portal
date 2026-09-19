@@ -23,6 +23,8 @@ type SimulationPayload = {
   clearance: number;
   other_charges: number;
   misc: number;
+  /** Misc as the invoice stated it, for the workbook to convert in Excel. */
+  misc_fc?: number | null;
   supplier_freight: number;
   bank_charges: number;
   own_bank_charges: number;
@@ -88,6 +90,17 @@ export function simulationFileName(boe: Boe, label: string): string {
  * message when the parser service is unreachable -- this is the one action on
  * the simulate page that needs it, so it must say so rather than failing mute.
  */
+/**
+ * The workbook converts misc charges against its own rate cell, so it needs
+ * the figure in the invoice's currency. That only holds while the scenario is
+ * still using the BOE's own misc charge -- a typed-in one is already rupees
+ * and has nothing to convert.
+ */
+function withMiscCurrency(payload: SimulationPayload, boe: Boe): SimulationPayload {
+  const inherited = Math.abs(payload.misc - (boe.misc_charges_inr ?? 0)) < 0.01;
+  return inherited ? { ...payload, misc_fc: boe.misc_charges_fc } : payload;
+}
+
 export async function downloadSimulationExcel(
   result: CostingResult,
   boe: Boe
@@ -99,7 +112,7 @@ export async function downloadSimulationExcel(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toSimulationPayload(result)),
+        body: JSON.stringify(withMiscCurrency(toSimulationPayload(result), boe)),
       }
     );
   } catch {

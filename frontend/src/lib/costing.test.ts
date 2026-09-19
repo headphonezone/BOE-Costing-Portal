@@ -41,6 +41,7 @@ const boe: Boe = {
   freight_inr: 5000,
   insurance_inr: 500,
   misc_charges_inr: 500,
+  misc_charges_fc: null,
   exchange_rate: 100,
   hawb_no: "870002539200",
   total_assess_value: 56000,

@@ -1688,12 +1688,17 @@ def _resolve_valuation(row: dict, exchange_rate: float, rates: dict | None,
 
     candidates = [round(misc_raw * exchange_rate, 2), round(misc_raw, 2)]
     misc_inr = candidates[0]
+    # Kept beside the rupee figure so the workbook can do the conversion in
+    # Excel against its own rate cell. Zero once the rupee reading wins: the
+    # BOE stated rupees and there is nothing to convert.
+    misc_fc = misc_raw
     freight, insurance, _ = settle(misc_inr)
     if assess_value is not None:
         for candidate in candidates:
             f, i, total = settle(candidate)
             if abs(total - assess_value) <= 2.0:
                 misc_inr, freight, insurance = candidate, f, i
+                misc_fc = misc_raw if candidate == candidates[0] else 0.0
                 break
 
     return {
@@ -1701,6 +1706,7 @@ def _resolve_valuation(row: dict, exchange_rate: float, rates: dict | None,
         'freight': round(freight, 2),
         'insurance': round(insurance, 2),
         'misc_charges_inr': misc_inr,
+        'misc_charges_fc': misc_fc,
         'inv_currency': currencies.get('inv', 'USD'),
     }
 
@@ -1757,6 +1763,7 @@ def parse_page2(page2_text: str, exchange_rate: float, rates: dict | None = None
             assess_value = float(nums[0])
 
     meta['misc_charges_inr'] = round(misc_raw * exchange_rate, 2)
+    meta['misc_charges_fc'] = misc_raw
 
     if valuation is not None:
         meta.update(_resolve_valuation(valuation, exchange_rate, rates,
@@ -1969,7 +1976,7 @@ def parse_all_items(pages_text_after_p1: list, exchange_rate: float, rates: dict
 
     primary = max(per_invoice_meta.values(), key=lambda m: m[1])[0]
     combined = dict(primary)  # dates and anything not summed: the largest invoice
-    for key in ('freight', 'insurance', 'misc_charges_inr'):
+    for key in ('freight', 'insurance', 'misc_charges_inr', 'misc_charges_fc'):
         combined[key] = round(sum(m.get(key) or 0 for m in metas), 2)
 
     values = [m.get('inv_value') for m in metas]
@@ -2444,8 +2451,28 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     _st(j5, font=WHT_BOLD, fill=NAVY_FILL, align=CENTER, border=_ab())
 
     k5 = cs['K5']
-    misc_inr_val = meta.get('misc_charges_inr', 0.0)
-    k5.value = misc_inr_val
+    # Misc charges are printed in the invoice's own currency on most BOEs, so
+    # the cell converts them here instead of carrying a fixed rupee figure:
+    # change the rate in D5 and the misc charge follows, like every other
+    # converted number on this sheet. A BOE that stated rupees has nothing to
+    # convert and keeps the plain figure; one with an invoice of each kind
+    # adds the rupee part on unconverted.
+    misc_inr_val = meta.get('misc_charges_inr') or 0.0
+    misc_fc_val = meta.get('misc_charges_fc') or 0.0
+    d5 = cs['D5'].value
+    rate = d5 if isinstance(d5, (int, float)) and d5 else (exchange_rate or 1)
+    if misc_fc_val:
+        # Whatever the conversion does not account for: the rupee-stated part
+        # of a BOE whose invoices differ, or a paisa of rounding where several
+        # invoices were each rounded before being added. Carried rather than
+        # dropped so the sheet still agrees with the portal to the paisa.
+        rupees_only = round(misc_inr_val - misc_fc_val * rate, 2)
+        tail = ''
+        if abs(rupees_only) >= 0.01:
+            tail = f'+{rupees_only}' if rupees_only > 0 else f'-{abs(rupees_only)}'
+        k5.value = f'={misc_fc_val}*$D$5{tail}'
+    else:
+        k5.value = misc_inr_val
     _st(k5, font=BLK_BOLD, fill=GREEN_FILL, align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
     # New rows under FREIGHT CHARGES - 2: SUPPLIER FREIGHT / BANK CHARGES /

@@ -15,6 +15,7 @@ export type Boe = {
   freight_inr: number | null;
   insurance_inr: number | null;
   misc_charges_inr: number | null;
+  misc_charges_fc: number | null;
   exchange_rate: number | null;
   hawb_no: string | null;
   total_assess_value: number | null;

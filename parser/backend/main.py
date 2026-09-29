@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 # simply absent, which load_dotenv treats as a no-op.
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile  # noqa: E402
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 import pdfplumber  # noqa: E402
@@ -196,6 +196,114 @@ async def upload_supporting_document(be_no: str, doc_type: str = "OTHER", file: 
         pass
 
     return {'storage_path': path, 'extraction': extraction}
+
+
+@app.post("/boe/{be_no}/debit-advice")
+async def upload_debit_advice(
+    be_no: str,
+    file: UploadFile = File(...),
+    password: str = Form(""),
+    override: bool = Form(False),
+):
+    """
+    Uploads a Yes Bank import advance remittance debit advice against an
+    already-uploaded BOE: sets the BOE's exchange_rate to the advice's FX
+    rate (confirmed, not provisional) and adds a debit-advice-specific bank
+    charges figure to costing, separate from the operator-typed
+    bank_charges/own_bank_charges fields.
+
+    Not admin-gated -- same open-endpoint precedent as /boe/upload, since
+    the browser has no PARSER_ADMIN_TOKEN to offer it (see the access
+    control note above _parse_boe_pdf).
+    """
+    existing = db.get_boe(be_no)
+    if not existing:
+        raise HTTPException(404, f"No BOE found for {be_no}")
+
+    file_bytes = await file.read()
+    try:
+        text = doc_extract.extract_pdf_text(file_bytes, password=password or None)
+    except Exception as e:
+        raise HTTPException(400, f"Could not open PDF (wrong password?): {e}")
+
+    fields = doc_extract.parse_debit_advice(text)
+    if fields.get('bill_amount') is None or fields.get('fx_rate') is None:
+        raise HTTPException(422, "Could not find BILL AMOUNT or FX RATE on this debit advice")
+
+    computed_bank_charges = db.compute_debit_advice_charges(fields)
+    if computed_bank_charges is None:
+        raise HTTPException(422, "Could not find the GST on CCY Purchase/Sale Fees line on this debit advice")
+
+    matched, matched_total = db.check_invoice_value_match(be_no, fields.get('bill_amount'))
+
+    if not matched and not override:
+        # Nothing is saved or applied yet -- the caller re-POSTs with
+        # override=true to proceed, or fixes the BOE/invoice mismatch first.
+        return {
+            'matched': False,
+            'bill_amount': fields.get('bill_amount'),
+            'bill_currency': fields.get('bill_currency'),
+            'invoice_total': matched_total,
+            'message': (
+                f"This debit advice's BILL AMOUNT ({fields.get('bill_currency')} {fields.get('bill_amount')}) "
+                f"doesn't match this BOE's invoice value ({matched_total}). Re-upload with override to proceed anyway."
+            ),
+        }
+
+    storage_path = db.upload_document(be_no, file.filename or f"{be_no}_debit_advice.pdf", file_bytes,
+                                       doc_type='DEBIT_ADVICE')
+    advice = db.save_debit_advice(
+        be_no, storage_path, file.filename or "debit_advice.pdf", fields,
+        computed_bank_charges, matched, matched_total, overridden=not matched,
+    )
+    return {'matched': matched, 'debit_advice': advice}
+
+
+@app.delete("/boe/{be_no}/debit-advice/{advice_id}")
+def undo_debit_advice(be_no: str, advice_id: int):
+    """
+    Undoes one debit advice upload: restores exchange_rate and
+    debit_advice_bank_charges to what they were immediately before, and
+    removes the file and its record. Left open, same as the endpoint above.
+    """
+    undone = db.undo_debit_advice(be_no, advice_id)
+    if not undone:
+        raise HTTPException(404, f"No debit advice {advice_id} found for {be_no}")
+    return {'ok': True}
+
+
+@app.get("/documents/{file_id}")
+def view_document(file_id: str):
+    """
+    Streams a document's bytes straight from Drive through this server, so
+    opening "View BOE PDF" in the portal shows the PDF inline -- the same
+    experience the old Supabase signed URLs gave -- rather than sending the
+    browser to drive.google.com, which needs the viewer's own Google account
+    to be a member of the Shared Drive (see drive_client.py). The server
+    holds the service account credentials; the browser never needs to.
+
+    Left open like the other new endpoints above: the portal has no session
+    token to attach, and a document is only reachable by its Drive file ID,
+    which isn't guessable and is checked against boe_documents first.
+    """
+    from fastapi.responses import Response
+    from . import drive_client
+
+    doc = db.get_document_by_storage_path(file_id)
+    if not doc:
+        raise HTTPException(404, "No document found for this ID")
+
+    try:
+        file_bytes = drive_client.download_document(file_id)
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch document from Drive: {e}")
+
+    content_type = "application/pdf" if (doc.get('file_name') or "").lower().endswith(".pdf") \
+        else "application/octet-stream"
+    return Response(
+        content=file_bytes, media_type=content_type,
+        headers={"Content-Disposition": f'inline; filename="{doc.get("file_name") or file_id}"'},
+    )
 
 
 @app.get("/boe", dependencies=[Depends(require_admin)])

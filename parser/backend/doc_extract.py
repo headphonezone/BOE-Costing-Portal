@@ -17,8 +17,8 @@ _MONTHS = {'JAN': '01', 'FEB': '02', 'MAR': '03', 'APR': '04', 'MAY': '05', 'JUN
            'JUL': '07', 'AUG': '08', 'SEP': '09', 'OCT': '10', 'NOV': '11', 'DEC': '12'}
 
 
-def extract_pdf_text(pdf_bytes: bytes) -> str:
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+def extract_pdf_text(pdf_bytes: bytes, password: str | None = None) -> str:
+    with pdfplumber.open(io.BytesIO(pdf_bytes), password=password) as pdf:
         return '\n'.join(p.extract_text() or '' for p in pdf.pages)
 
 
@@ -137,14 +137,56 @@ def parse_other(text: str) -> dict:
     return {'doc_date': _find_date(text)}
 
 
+def parse_debit_advice(text: str) -> dict:
+    """
+    A Yes Bank import advance remittance debit advice: an advance payment
+    made to a supplier before the BOE arrives, whose FX rate becomes the
+    BOE's confirmed exchange rate and whose bank charges get added to
+    costing separately from the operator-typed bank_charges field.
+
+    Only Yes Bank's layout is known (the one sample this was built against).
+    A field that doesn't match comes back None rather than raising -- the
+    caller decides whether a missing bill_amount or fx_rate means the upload
+    can't proceed.
+    """
+    bill_amount, bill_currency = None, None
+    m = re.search(r'BILL\s+AMOUNT\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
+    if m:
+        bill_currency, bill_amount = m.group(1).upper(), float(m.group(2).replace(',', ''))
+
+    fx_rate = None
+    m = re.search(r'FX\s+RATE\s*\([A-Z]{3}\s*/\s*[A-Z]{3}\s*\)\s*:?\s*([\d.]+)', text, re.IGNORECASE)
+    if m:
+        fx_rate = float(m.group(1))
+
+    def _line_amount(label_pat: str) -> float | None:
+        m = re.search(rf'{label_pat}\s+[A-Z]{{3}}\s+([\d,]+\.\d{{2}})', text, re.IGNORECASE)
+        return float(m.group(1).replace(',', '')) if m else None
+
+    bill_commission = _line_amount(r'BILL\s+COMMISSION')
+    gst_on_ccy_fees = _line_amount(r'GST\s+ON\s+CCY\s+PURCHASE\s*/\s*SALE\s+FEES')
+    correspondent_bank_charges = _line_amount(r'CORRESPONDENT\s+BANK\s+CHARGES')
+
+    return {
+        'doc_date': _find_date(text),
+        'bill_amount': bill_amount,
+        'bill_currency': bill_currency,
+        'fx_rate': fx_rate,
+        'bill_commission': bill_commission,
+        'gst_on_ccy_fees': gst_on_ccy_fees,
+        'correspondent_bank_charges': correspondent_bank_charges,
+    }
+
+
 _PARSERS = {
     'INVOICE': parse_invoice,
     'PACKING_LIST': parse_packing_list,
     'COO': parse_coo,
+    'DEBIT_ADVICE': parse_debit_advice,
 }
 
 
-def extract_document(doc_type: str, file_name: str, file_bytes: bytes) -> dict | None:
+def extract_document(doc_type: str, file_name: str, file_bytes: bytes, password: str | None = None) -> dict | None:
     """
     Runs the doc_type-appropriate parser over a supporting document. Returns
     None for non-PDF files (nothing to extract text from) or for a BOE
@@ -154,7 +196,7 @@ def extract_document(doc_type: str, file_name: str, file_bytes: bytes) -> dict |
     if doc_type == 'BOE' or not file_name.lower().endswith('.pdf'):
         return None
 
-    text = extract_pdf_text(file_bytes)
+    text = extract_pdf_text(file_bytes, password=password)
     parser = _PARSERS.get(doc_type, parse_other)
     fields = parser(text)
     fields['raw_text'] = text

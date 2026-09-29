@@ -5,7 +5,19 @@
  */
 import { supabaseServerComponent } from "./supabase-rsc";
 import { supabaseServer } from "./supabase-server";
-import type { Boe, BoeDocument, BoeItem, BoeLicence, BoeVariableFields } from "./types";
+import { API_BASE_URL } from "./supabase";
+import type { Boe, BoeDebitAdvice, BoeDocument, BoeItem, BoeLicence, BoeVariableFields } from "./types";
+
+/**
+ * A pre-migration boe_documents row still holds a Supabase Storage path
+ * (e.g. "8555370/BOE/file.pdf"), not a Drive file ID -- those slashes are
+ * the tell. Drive file IDs never contain one. Once the one-time migration
+ * script (parser/scripts/migrate_docs_to_drive.py) has run against every
+ * row, this always returns false and the branch below is dead but harmless.
+ */
+function isLegacySupabasePath(storagePath: string): boolean {
+  return storagePath.includes("/");
+}
 
 export type BoeBundle = {
   boe: Boe;
@@ -13,6 +25,7 @@ export type BoeBundle = {
   licences: BoeLicence[];
   documents: BoeDocument[];
   variableFields: BoeVariableFields | null;
+  debitAdvices: BoeDebitAdvice[];
 };
 
 /**
@@ -38,7 +51,7 @@ export async function listBoes(limit = LIST_LIMIT): Promise<Boe[]> {
 
 export async function getBoeBundle(be_no: string): Promise<BoeBundle | null> {
   const supabase = await supabaseServerComponent();
-  const [{ data: boe }, { data: items }, { data: licences }, { data: docs }, { data: vf }] =
+  const [{ data: boe }, { data: items }, { data: licences }, { data: docs }, { data: vf }, { data: advices }] =
     await Promise.all([
       supabase.from("boes").select("*").eq("be_no", be_no).maybeSingle(),
       supabase.from("boe_items").select("*").eq("be_no", be_no).order("global_sno"),
@@ -49,6 +62,11 @@ export async function getBoeBundle(be_no: string): Promise<BoeBundle | null> {
         .eq("be_no", be_no)
         .order("uploaded_at", { ascending: false }),
       supabase.from("boe_variable_fields").select("*").eq("be_no", be_no).maybeSingle(),
+      supabase
+        .from("boe_debit_advices")
+        .select("*")
+        .eq("be_no", be_no)
+        .order("uploaded_at", { ascending: false }),
     ]);
 
   if (!boe) return null;
@@ -59,34 +77,48 @@ export async function getBoeBundle(be_no: string): Promise<BoeBundle | null> {
     licences: (licences ?? []) as BoeLicence[],
     documents: (docs ?? []) as BoeDocument[],
     variableFields: (vf ?? null) as BoeVariableFields | null,
+    debitAdvices: (advices ?? []) as BoeDebitAdvice[],
   };
 }
 
 /**
- * The bucket the parser service uploads into. It is private -- a public URL
- * on it returns 400 -- so every link to a stored file has to be signed.
+ * The bucket pre-migration documents still live in. Only reached for the
+ * legacy-path branch below; new uploads never touch Supabase Storage.
  */
 const DOCS_BUCKET = "boe-documents";
 
 /**
- * How long a document link stays valid. The pages that mint these are
- * `force-dynamic`, so a link is signed fresh on every render and only has to
- * outlive the visit it was made for.
+ * How long a legacy Supabase-signed document link stays valid. The pages
+ * that mint these are `force-dynamic`, so a link is signed fresh on every
+ * render and only has to outlive the visit it was made for.
  */
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 /**
- * One signed link per document, keyed by storage path.
+ * One viewable link per document, keyed by storage path.
  *
- * A file that has gone missing from Storage is left out of the map rather
- * than throwing, and the caller renders it as unavailable: a broken
- * attachment must not take the whole record page down with it.
+ * Documents live in Google Drive now, but the link points at this app's own
+ * parser service (GET /documents/{file_id}), which streams the bytes straight
+ * from Drive using the service account's credentials. That -- not a direct
+ * drive.google.com link -- is what makes "View BOE PDF" open for anyone using
+ * the portal: a raw Drive link requires the *viewer's own* Google account to
+ * be a member of the "BOE Costing Portal" Shared Drive, which defeats the
+ * point of a portal link anyone can click. A row that predates the Drive
+ * migration still holds a Supabase Storage path (see isLegacySupabasePath)
+ * and falls back to a signed Supabase URL.
+ *
+ * A file that has gone missing is left out of the map rather than throwing,
+ * and the caller renders it as unavailable: a broken attachment must not
+ * take the whole record page down with it.
  */
 export async function signDocumentUrls(
   documents: BoeDocument[]
 ): Promise<Map<string, string>> {
   const entries = await Promise.all(
     documents.map(async (doc) => {
+      if (!isLegacySupabasePath(doc.storage_path)) {
+        return [doc.storage_path, `${API_BASE_URL}/documents/${doc.storage_path}`] as const;
+      }
       try {
         // Signed with the server-only client so the bucket can refuse the
         // anon key outright. This function is only ever called from a server

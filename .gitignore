@@ -19,6 +19,8 @@ venv/
 .env*.local
 backend/.env
 frontend/.env.local
+*.iam.gserviceaccount.com.json
+hpz-packing-app-*.json
 
 # ---- misc ----
 .DS_Store
@@ -29,6 +31,11 @@ coverage/
 # supplier, unit prices, duty. Keep them local, never in the repository.
 samples/*
 !samples/README.md
+
+# A real Yes Bank debit advice (account number, PAN, remittance details),
+# dropped at the repo root while building the debit-advice feature. Same
+# reason samples/ is ignored above.
+DEBIT_ADVICE*.pdf
 
 # ---- working scratch ----
 # Query/ holds real Bills of Entry and generated workbooks while a parsing

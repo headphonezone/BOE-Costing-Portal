@@ -58,6 +58,9 @@ import type {
 /** Statutory Social Welfare Surcharge rate, used only as a fallback. */
 const DEFAULT_SWS_PCT = 0.1;
 
+/** Clearance charge assumed when no clearing_charges was entered for a BOE. */
+const DEFAULT_CLEARANCE_INR = 10000;
+
 export function itemKey(invsno: number, itemsn: number): string {
   return `${invsno}-${itemsn}`;
 }
@@ -129,6 +132,14 @@ export type ExpensePool = {
   supplierFreight: number;
   bankCharges: number;
   ownBankCharges: number;
+  /**
+   * Bill Commission + Correspondent Bank Charges + (GST on CCY fees / 0.18)
+   * from an uploaded debit advice -- separate from bankCharges/ownBankCharges,
+   * which stay operator-typed. Always inherited into a scenario as-is: this
+   * is a real bank transaction, not something a what-if simulates, so there
+   * is no scenario override column for it (unlike every other field here).
+   */
+  debitAdviceBankCharges: number;
   /** Sum of every component above -- the pool apportioned into cost per piece. */
   total: number;
 };
@@ -212,12 +223,13 @@ export function resolveActualInputs(
   const expenses = buildPool({
     freight: num(variableFields?.freight_charges, boe.freight_inr),
     insurance: num(boe.insurance_inr),
-    clearance: num(variableFields?.clearing_charges),
+    clearance: num(variableFields?.clearing_charges, DEFAULT_CLEARANCE_INR),
     otherCharges: 0,
     misc: num(boe.misc_charges_inr),
     supplierFreight: num(variableFields?.supplier_freight),
     bankCharges: num(variableFields?.bank_charges),
     ownBankCharges: num(variableFields?.own_bank_charges),
+    debitAdviceBankCharges: num(variableFields?.debit_advice_bank_charges),
   });
 
   return {
@@ -249,6 +261,7 @@ export function resolveScenarioInputs(
     supplierFreight: scenario.supplier_freight_inr ?? actual.expenses.supplierFreight,
     bankCharges: scenario.bank_charges_inr ?? actual.expenses.bankCharges,
     ownBankCharges: scenario.own_bank_charges_inr ?? actual.expenses.ownBankCharges,
+    debitAdviceBankCharges: actual.expenses.debitAdviceBankCharges,
   });
 
   return {
@@ -268,7 +281,8 @@ function buildPool(parts: Omit<ExpensePool, "total">): ExpensePool {
     parts.misc +
     parts.supplierFreight +
     parts.bankCharges +
-    parts.ownBankCharges;
+    parts.ownBankCharges +
+    parts.debitAdviceBankCharges;
   return { ...parts, total };
 }
 

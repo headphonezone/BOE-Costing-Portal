@@ -72,7 +72,7 @@ export type BoeDocument = {
   uploaded_at: string;
 };
 
-/** The six provisional/fixed cost fields the existing dashboard maintains. */
+/** The seven provisional/fixed cost fields the existing dashboard maintains. */
 export type BoeVariableFields = {
   be_no: string;
   updated_at: string;
@@ -82,15 +82,46 @@ export type BoeVariableFields = {
   supplier_freight: number | null;
   bank_charges: number | null;
   own_bank_charges: number | null;
+  /** Bill Commission + Correspondent Bank Charges + (GST on CCY fees / 0.18) from a debit advice. Separate from bank_charges/own_bank_charges. */
+  debit_advice_bank_charges: number | null;
   exchange_rate_status: FieldStatus | null;
   freight_charges_status: FieldStatus | null;
   clearing_charges_status: FieldStatus | null;
   supplier_freight_status: FieldStatus | null;
   bank_charges_status: FieldStatus | null;
   own_bank_charges_status: FieldStatus | null;
+  debit_advice_bank_charges_status: FieldStatus | null;
 };
 
 export type FieldStatus = "provisional" | "fixed";
+
+/**
+ * A Yes Bank import advance remittance debit advice uploaded against a BOE.
+ * Applying one sets exchange_rate to fx_rate and debit_advice_bank_charges to
+ * computed_bank_charges (both 'fixed'); undoing it restores whatever those
+ * held immediately before, via prev_* below.
+ */
+export type BoeDebitAdvice = {
+  id: number;
+  be_no: string;
+  storage_path: string;
+  file_name: string | null;
+  bill_amount: number | null;
+  bill_currency: string | null;
+  fx_rate: number | null;
+  bill_commission: number | null;
+  correspondent_bank_charges: number | null;
+  gst_on_ccy_fees: number | null;
+  computed_bank_charges: number | null;
+  invoice_value_matched: boolean | null;
+  matched_invoice_total: number | null;
+  overridden: boolean;
+  prev_exchange_rate: number | null;
+  prev_exchange_rate_status: FieldStatus | null;
+  prev_debit_advice_bank_charges: number | null;
+  prev_debit_advice_bank_charges_status: FieldStatus | null;
+  uploaded_at: string;
+};
 
 // ---------------------------------------------------------------------------
 // Scenarios -- owned by the portal (sql/001_scenarios.sql)

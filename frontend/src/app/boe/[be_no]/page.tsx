@@ -5,6 +5,7 @@ import { date, inr, inr0, usd } from "@/lib/format";
 import { API_BASE_URL } from "@/lib/supabase";
 import { CostingTable } from "@/components/CostingTable";
 import { StatTile } from "@/components/StatTile";
+import { DebitAdviceSection } from "@/components/DebitAdviceSection";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export default async function BoePage({
     );
   }
 
-  const { boe, items, licences, documents, variableFields } = bundle;
+  const { boe, items, licences, documents, variableFields, debitAdvices } = bundle;
   const actual = computeActual(boe, items, variableFields);
   const licenceTotal = licences.reduce((s, l) => s + (l.debit_duty ?? 0), 0);
 
@@ -230,6 +231,8 @@ export default async function BoePage({
           </p>
         </section>
       )}
+
+      <DebitAdviceSection be_no={boe.be_no} debitAdvices={debitAdvices} />
     </main>
   );
 }

@@ -99,12 +99,14 @@ const variableFields: BoeVariableFields = {
   supplier_freight: 1000,
   bank_charges: 500,
   own_bank_charges: 500,
+  debit_advice_bank_charges: null,
   exchange_rate_status: "provisional",
   freight_charges_status: "provisional",
   clearing_charges_status: "fixed",
   supplier_freight_status: "provisional",
   bank_charges_status: "provisional",
   own_bank_charges_status: "provisional",
+  debit_advice_bank_charges_status: null,
 };
 
 function scenario(overrides: Partial<Scenario> = {}): Scenario {
@@ -201,6 +203,32 @@ describe("expense pool", () => {
     expect(pool.supplierFreight).toBe(1000);
     expect(pool.bankCharges).toBe(500);
     expect(pool.ownBankCharges).toBe(500);
+  });
+
+  it("defaults clearance to 10000 when no clearing_charges was entered", () => {
+    const noClearance: BoeVariableFields = { ...variableFields, clearing_charges: null };
+    const pool = resolveActualInputs(boe, noClearance).expenses;
+    expect(pool.clearance).toBe(10000);
+  });
+
+  it("still respects an operator-entered clearing_charges, including zero", () => {
+    const zeroClearance: BoeVariableFields = { ...variableFields, clearing_charges: 0 };
+    const pool = resolveActualInputs(boe, zeroClearance).expenses;
+    expect(pool.clearance).toBe(0);
+  });
+
+  it("adds debit_advice_bank_charges into the pool, separate from bank_charges", () => {
+    const withAdvice: BoeVariableFields = { ...variableFields, debit_advice_bank_charges: 4526.89 };
+    const pool = resolveActualInputs(boe, withAdvice).expenses;
+    expect(pool.debitAdviceBankCharges).toBe(4526.89);
+    expect(pool.bankCharges).toBe(500); // untouched
+    expect(pool.total).toBeCloseTo(9000 + 4526.89, 8);
+  });
+
+  it("inherits debit_advice_bank_charges into a scenario unconditionally", () => {
+    const withAdvice: BoeVariableFields = { ...variableFields, debit_advice_bank_charges: 4526.89 };
+    const pool = resolveScenarioInputs(boe, withAdvice, scenario()).expenses;
+    expect(pool.debitAdviceBankCharges).toBe(4526.89);
   });
 
   it("apportions the whole pool and nothing more", () => {

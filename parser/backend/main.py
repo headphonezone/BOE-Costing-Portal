@@ -385,6 +385,7 @@ class SimulationExport(BaseModel):
     supplier_freight: float = 0
     bank_charges: float = 0
     own_bank_charges: float = 0
+    debit_advice_bank_charges: float = 0
     items: list[SimulationItem] = []
 
 
@@ -446,6 +447,7 @@ def download_simulation_excel(be_no: str, sim: SimulationExport):
         ('supplier_freight', sim.supplier_freight),
         ('bank_charges', sim.bank_charges),
         ('own_bank_charges', sim.own_bank_charges),
+        ('debit_advice_bank_charges', sim.debit_advice_bank_charges),
     )}
 
     # bcd_forgone is deliberately empty: costing.ts has already resolved each
@@ -512,11 +514,30 @@ def download_excel(be_no: str):
             'misc_charges_inr': boe.get('misc_charges_inr'),
             'misc_charges_fc': boe.get('misc_charges_fc')}
 
+    # A field with no confirmed value falls back to whatever the BOE itself
+    # carries -- or, for clearance, the same 10000 default resolveActualInputs()
+    # uses in costing.ts -- exactly like the record page shows it.
+    #
+    # vf.get(f, 0) alone is not enough once ANY field on this BOE has ever
+    # been confirmed (e.g. by a debit advice upload creating the row):
+    # Supabase then returns an explicit column value of None for every OTHER
+    # field on that same row, and .get(f, 0) only falls back when the key is
+    # missing entirely, not when it's present but null -- which silently
+    # zeroed freight and clearance out of the Excel the moment a debit advice
+    # was uploaded against a BOE that had never confirmed anything before.
     vf = detail['variable_fields'] or {}
+    field_defaults = {
+        'exchange_rate': header.get('exchange_rate') or 0.0,
+        'freight_charges': meta.get('freight') or 0.0,
+        'clearing_charges': 10000.0,
+    }
     variable_fields = {
-        f: {'value': vf.get(f, 0), 'status': vf.get(f'{f}_status', 'provisional')}
+        f: {
+            'value': vf.get(f) if vf.get(f) is not None else field_defaults.get(f, 0.0),
+            'status': vf.get(f'{f}_status') or 'provisional',
+        }
         for f in db.FIELDS
-    } if vf else {}
+    }
 
     excel_bytes = bp.fill_excel(header, meta, items, duties, bcd_forgone, licences, assess_values, variable_fields)
     return StreamingResponse(

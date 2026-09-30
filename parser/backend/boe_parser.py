@@ -2433,7 +2433,10 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
 
     cs['I6'].value = meta.get('insurance', 0)
 
-    cs['I7'].value = _var_value('clearing_charges', 0)
+    # 10000 mirrors DEFAULT_CLEARANCE_INR in frontend/src/lib/costing.ts --
+    # both call sites in main.py already resolve this default themselves, so
+    # this is a defense-in-depth fallback, not the primary source of it.
+    cs['I7'].value = _var_value('clearing_charges', 10000.0)
     _st(cs['I7'], font=BLK_BOLD, fill=_status_fill('clearing_charges'), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
     # I8 (OTHERS) is left at the template's 0 for an actual BOE, which has no
@@ -2482,6 +2485,7 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         (6, 'SUPPLIER FREIGHT', 'supplier_freight'),
         (7, 'BANK CHARGES', 'bank_charges'),
         (8, 'OWN BANK CHARGES', 'own_bank_charges'),
+        (9, 'DEBIT ADVICE BANK CHARGES', 'debit_advice_bank_charges'),
     ]:
         jcell = cs.cell(row=row, column=10)  # column J
         jcell.value = label
@@ -2507,7 +2511,13 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     # This does not touch the assessable-value reconciliation in columns L-O,
     # which apportions freight, misc and insurance individually and already
     # agrees with the portal.
-    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8'
+    #
+    # K9 (added alongside K5:K8 above) is debit_advice_bank_charges -- a Yes
+    # Bank debit advice's Bill Commission + Correspondent Bank Charges +
+    # (GST on CCY fees / 0.18), kept separate from K7/K8's operator-typed
+    # bank charges. Costed the same value-proportional way as everything
+    # else in this pool, matching costing.ts's expense pool exactly.
+    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9'
 
     for r in range(5, 11):
         cs.row_dimensions[r].height = 18

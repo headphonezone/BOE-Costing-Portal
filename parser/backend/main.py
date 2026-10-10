@@ -92,14 +92,27 @@ def _parse_boe_pdf(pdf_bytes: bytes) -> dict:
     header = bp.parse_header(pages_text[0])
     header['hawb_no'] = bp.parse_hawb(pages_text[0])
     header['importer_name'] = bp.parse_importer(pages_text[0])
-    ex_rate = header.get('exchange_rate', 1.0)
     # A BOE can quote invoice, freight and insurance in different currencies,
     # so the whole rate table goes through, not just the USD rate.
     rates = bp.parse_exchange_rates(pages_text[0])
+    inv_summary_list = bp.parse_invoice_summary_multi(pages_text[0])
+
+    # The BOE's exchange rate is its invoice currency's, which parse_header
+    # only finds when that currency is USD. An EUR, GBP or SGD invoice printed
+    # "1 EUR=112.35INR" and nothing for USD, so the BOE was stored with no rate
+    # and costed at 1. When every invoice is in one currency the form states a
+    # rate for, that rate is the one. A USD BOE resolves to the same figure it
+    # always did, and one mixing currencies keeps the USD reading rather than
+    # guessing which invoice should win.
+    inv_currencies = {i['currency'] for i in inv_summary_list}
+    if len(inv_currencies) == 1:
+        (inv_currency,) = inv_currencies
+        if inv_currency != 'INR' and inv_currency in rates:
+            header['exchange_rate'] = rates[inv_currency]
+    ex_rate = header.get('exchange_rate', 1.0)
 
     meta, items = bp.parse_all_items(pages_text[1:], ex_rate, rates, valuations[1:])
 
-    inv_summary_list = bp.parse_invoice_summary_multi(pages_text[0])
     invoice_count = meta.get('invoice_count', 1)
     if invoice_count > 1 and len(inv_summary_list) == invoice_count:
         # Page 1 lists every invoice number reliably; the invoice pages do not

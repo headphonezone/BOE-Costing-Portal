@@ -1,5 +1,5 @@
 """
-Refresh the BOE <-> Tally item lookup (migration 013) from Supabase and TallyPrime.
+Refresh the BOE <-> Tally item lookup (migration 015) from Supabase and TallyPrime.
 
     python scripts/tally_link/refresh.py            dry run: match and report, write nothing
     python scripts/tally_link/refresh.py --apply    ... and load the result into Supabase
@@ -7,7 +7,7 @@ Refresh the BOE <-> Tally item lookup (migration 013) from Supabase and TallyPri
 Run it on the machine where TallyPrime is open (:9000) and the Supabase CLI is
 logged in (`supabase login`); both companies' current books must be open in
 Tally. Reads go to both; the only writes are the two tables from migration
-013, and only with --apply.
+015, and only with --apply.
 
 What a run does
   1. boes / boe_items from Supabase; stock items and purchase vouchers from

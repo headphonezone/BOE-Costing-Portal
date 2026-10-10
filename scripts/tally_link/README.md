@@ -2,7 +2,7 @@
 
 Links each BOE line in the portal to the Tally stock item it was booked as,
 so either name can be looked up from the other. The tables come from
-[`sql/013_tally_item_map.sql`](../../sql/013_tally_item_map.sql); this folder
+[`sql/015_tally_item_map.sql`](../../sql/015_tally_item_map.sql); this folder
 fills them.
 
 | | |

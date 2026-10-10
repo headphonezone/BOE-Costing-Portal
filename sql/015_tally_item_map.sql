@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- BOE Costing Portal -- migration 013: link BOE items to Tally stock items
+-- BOE Costing Portal -- migration 015: link BOE items to Tally stock items
 --
 -- A Bill of Entry names an item the way customs saw it ("Wired Earphone-KZ -
 -- Duonic - Silver - Without Switch - 3.5mmMic"); Tally names the same item the

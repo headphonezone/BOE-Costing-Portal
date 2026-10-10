@@ -11,6 +11,16 @@ const BANK_LABELS: Record<DebitAdviceBank, string> = {
   SBI: "SBI",
 };
 
+/**
+ * Yes Bank protects every debit advice PDF with the same account-specific
+ * password, so defaulting it here saves re-typing it on every upload. SBI's
+ * sample wasn't password-protected, so it defaults to blank.
+ */
+const BANK_DEFAULT_PASSWORDS: Record<DebitAdviceBank, string> = {
+  YES_BANK: "9063097",
+  SBI: "",
+};
+
 type MismatchWarning = {
   fileName: string;
   message: string;
@@ -50,7 +60,7 @@ export function DebitAdviceSection({
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "idle" });
   const [bank, setBank] = useState<DebitAdviceBank>("YES_BANK");
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(BANK_DEFAULT_PASSWORDS.YES_BANK);
   const [undoingId, setUndoingId] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -100,7 +110,10 @@ export function DebitAdviceSection({
         computedBankCharges: data.debit_advice.computed_bank_charges,
         fxRate: data.debit_advice.fx_rate,
       });
-      setPassword("");
+      // Reset to the bank's default rather than blank: a partial advance and
+      // its later balance payment are typically the same bank, so the next
+      // upload shouldn't need the password re-typed either.
+      setPassword(BANK_DEFAULT_PASSWORDS[bankChoice]);
       router.refresh();
     } catch (err) {
       setState({
@@ -220,7 +233,11 @@ export function DebitAdviceSection({
             <label className="mb-1 block text-[11px] uppercase tracking-wide text-muted">Bank</label>
             <select
               value={bank}
-              onChange={(e) => setBank(e.target.value as DebitAdviceBank)}
+              onChange={(e) => {
+                const next = e.target.value as DebitAdviceBank;
+                setBank(next);
+                setPassword(BANK_DEFAULT_PASSWORDS[next]);
+              }}
               disabled={busy}
               className="rounded-lg border border-line bg-background px-3 py-1.5 text-sm"
             >

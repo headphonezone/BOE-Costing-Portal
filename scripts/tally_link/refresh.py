@@ -15,7 +15,9 @@ What a run does
   2. Ties each import voucher to its BOE: by the BOE number in the narration;
      when that number is missing, or names a BOE the lines do not fit, by
      supplier, date and every line's qty and rate.
-  3. Pairs BOE lines with voucher lines (matcher.py).
+  3. Pairs BOE lines with voucher lines (matcher.py). A pair whose numbers
+     agree but whose names don't (review) is counted in the report and not
+     saved; nor is an alias whose BOE text points at more than one item.
   4. --apply: upserts boe_item_tally_link, then rebuilds tally_item_map from
      every stored link.
 
@@ -165,7 +167,10 @@ def assign_vouchers(boes: dict, items: dict, vouchers: dict):
 
 
 def build_links(boes, items, assign, company):
-    rows, summary = [], collections.Counter()
+    """Link rows for every pair the matcher stands behind, plus the BOEs it matched anything on. A pair
+    whose numbers agree but whose names don't (status review) is counted in the summary and not saved --
+    the lookup holds only links that can be taken as they stand."""
+    rows, summary, matched = [], collections.Counter(), set()
     for be, b in boes.items():
         vs = sorted(assign.get(be, []), key=lambda v: (v["date"], v["no"]))
         lines = [dict(i, vch=v, line_no=n) for v in vs for n, i in enumerate(v["inv"], 1)]
@@ -178,9 +183,13 @@ def build_links(boes, items, assign, company):
             continue
         links, ub, _, T = matcher.match_boe(bi, lines)
         summary["lines_not_in_tally"] += len(ub)
+        if links:
+            matched.add(be)
         for L in links:
             summary[f"lines_{L['status']}"] += len(L["b"])
-            note = "; ".join(L["conflicts"] + [f"names look swapped - BOE text fits '{x}'" for x in L["swap"]]) or None
+            if L["status"] == "review":
+                continue
+            note ="; ".join(L["conflicts"] + [f"names look swapped - BOE text fits '{x}'" for x in L["swap"]]) or None
             for i in L["b"]:
                 for j in L["t"]:
                     v = lines[j]["vch"]
@@ -193,12 +202,13 @@ def build_links(boes, items, assign, company):
                                for r in rows)
     if keys and max(keys.values()) > 1:
         sys.exit("internal error: duplicate link keys")
-    return rows, summary
+    return rows, summary, matched
 
 
 def build_alias(links: list[dict], masters: dict) -> list[dict]:
     """Roll links up to supplier + BOE description -> Tally item. A description linked one-to-one to
-    different items on different BOEs is ambiguous, so those rows are marked review."""
+    different items on different BOEs is ambiguous, so those rows are left out, as is any row resting on
+    a review link."""
     sup = lambda s: re.sub(r"\s+", " ", re.sub(r"[.,]", " ", s or "")).strip().lower()
     key = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
     groups = {}
@@ -221,12 +231,14 @@ def build_alias(links: list[dict], masters: dict) -> list[dict]:
             one_to_one[(s, d)].add(t)
     rows = []
     for (s, d, t), g in groups.items():
-        others = sorted(one_to_one[(s, d)] - {t}) if g["kinds"] <= {"1:1", "amount", "name"} else []
-        notes = sorted(g["notes"]) + (["same BOE text also linked to: " + "; ".join(others)] if others else [])
+        others = one_to_one[(s, d)] - {t} if g["kinds"] <= {"1:1", "amount", "name"} else set()
+        if g["review"] or others:
+            continue
+        notes = sorted(g["notes"])
         rows.append({"supplier_name": g["supplier_name"], "boe_description": g["boe_description"], "cth": g["cth"],
                      "tally_item": t, "in_fv_master": t in masters.get("FV", set()), "in_hz_master": t in masters.get("HZ", set()),
                      "booked_in": sorted(g["booked_in"]), "link_kind": "/".join(sorted(g["kinds"])),
-                     "status": "review" if (g["review"] or others) else "auto", "evidence_lines": len(g["lines"]),
+                     "status": "auto", "evidence_lines": len(g["lines"]),
                      "be_nos": sorted(g["be_nos"]), "name_score": round(g["score"], 3), "note": " | ".join(notes) or None})
     return rows
 
@@ -343,10 +355,10 @@ def main():
     masters, vouchers, seen = pull_tally(args.cache)
 
     assign, notes, company = assign_vouchers(boes, items, vouchers)
-    links, summary = build_links(boes, items, assign, company)
+    links, summary, matched = build_links(boes, items, assign, company)
 
     print(f"\nBOEs {summary['boes']}, with a Tally voucher {summary['boes_with_voucher']}")
-    print(f"BOE lines {summary['boe_lines']}: auto {summary['lines_auto']}, review {summary['lines_review']}, "
+    print(f"BOE lines {summary['boe_lines']}: auto {summary['lines_auto']}, review (not saved) {summary['lines_review']}, "
           f"not in Tally {summary['lines_not_in_tally']}")
     print(f"link rows {len(links)}")
     if notes:
@@ -361,7 +373,7 @@ def main():
         print("\nDry run - nothing written. Re-run with --apply to load.")
         return
     print("\nLoading into Supabase ...", flush=True)
-    apply(links, {r["be_no"] for r in links}, masters, args.project_ref)
+    apply(links, matched, masters, args.project_ref)
 
 
 if __name__ == "__main__":

@@ -49,9 +49,12 @@ this run, so a past year that is no longer open in Tally keeps its links.
    units (`amount`) are linked when the figures add up. See
    [`matcher.py`](matcher.py).
 
-`status = 'review'` means the numbers agree but the names don't: a different
-colour, size, plug or mic, or two items whose numbers look swapped. The
-reason is in `note`.
+Only links the matcher can stand behind are saved (`status = 'auto'`). A pair
+whose numbers agree but whose names don't -- a different colour, size, plug or
+mic, or two items whose numbers look swapped -- is a review match: the run
+counts it and leaves that BOE line unlinked. Likewise a BOE description linked
+to different Tally items on different BOEs gets no alias row, since it can't
+say which one a new BOE means.
 
 The dry run also lists vouchers worth a look: a narration naming the wrong
 BOE, a narration with no BOE number, and imports whose BOE isn't in the portal.

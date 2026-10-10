@@ -321,12 +321,14 @@ def update_field(be_no: str, field_name: str, value: float, status: str) -> None
 # never the fee itself, so it's recovered by dividing the GST back out.
 GST_RATE = 0.18
 
-# How close a debit advice's BILL AMOUNT has to be to the BOE's invoice value
-# (boes.inv_value_usd, already summed across every invoice on a multi-invoice
-# BOE) to count as a match. Kept tiny rather than the ~2.0 tolerance used
-# elsewhere in the parser: an advance payment is expected to equal the
-# invoice value exactly, so anything looser would wave through genuine
-# mismatches -- wrong BOE, partial advance, wrong currency.
+# How far the running total of every debit advice on a BOE (this upload
+# included) may exceed the invoice value (boes.inv_value_usd, already summed
+# across every invoice on a multi-invoice BOE) before it counts as a
+# mismatch. Kept tiny rather than the ~2.0 tolerance used elsewhere in the
+# parser: a genuine overpayment should never happen, so anything looser would
+# wave through a wrong BOE or a duplicate upload. Being UNDER the invoice
+# value is never a mismatch -- an advance is supposed to be partial, with a
+# balance payment (another debit advice) expected later.
 INVOICE_VALUE_MATCH_TOLERANCE = 0.01
 
 
@@ -344,17 +346,66 @@ def compute_debit_advice_charges(fields: dict) -> float | None:
     return round(bill_commission + correspondent + (gst_ccy / GST_RATE), 2)
 
 
-def check_invoice_value_match(be_no: str, bill_amount: float | None) -> tuple[bool, float | None]:
+def check_invoice_value_match(be_no: str, bill_amount: float | None) -> tuple[bool, float | None, float | None]:
     """
-    Compares a debit advice's BILL AMOUNT against this BOE's invoice value.
-    Returns (matched, the invoice total it was compared against) so the
-    caller can show the actual numbers in a mismatch warning.
+    Compares the RUNNING TOTAL of every debit advice on this BOE -- every one
+    already saved, plus the one about to be (bill_amount) -- against the
+    BOE's invoice value. A partial advance is expected to land under that
+    total, with a balance payment (another debit advice) following later, so
+    only exceeding it counts as a mismatch -- most likely a wrong BOE or a
+    duplicate upload, not a normal partial payment.
+
+    Returns (matched, invoice_total, running_total) so the caller can show
+    the actual numbers in a mismatch warning.
     """
     boe = _client.table('boes').select('inv_value_usd').eq('be_no', be_no).limit(1).execute().data
-    total = boe[0].get('inv_value_usd') if boe else None
-    if bill_amount is None or total is None:
-        return False, total
-    return abs(bill_amount - total) <= INVOICE_VALUE_MATCH_TOLERANCE, total
+    invoice_total = boe[0].get('inv_value_usd') if boe else None
+
+    existing = _client.table('boe_debit_advices').select('bill_amount').eq('be_no', be_no).execute().data
+    existing_total = sum(r.get('bill_amount') or 0.0 for r in existing)
+
+    if bill_amount is None or invoice_total is None:
+        return False, invoice_total, existing_total
+
+    running_total = round(existing_total + bill_amount, 2)
+    matched = running_total <= invoice_total + INVOICE_VALUE_MATCH_TOLERANCE
+    return matched, invoice_total, running_total
+
+
+def _debit_advice_aggregates(be_no: str) -> tuple[float | None, float]:
+    """
+    The combined exchange rate and bank charges across every debit advice
+    currently on this BOE: a simple average of fx_rate (one advance at one
+    rate, a balance payment at another, blended evenly) and a plain sum of
+    computed_bank_charges (every advice's bank charges add up, they don't
+    overwrite each other). (None, 0.0) when no advices remain -- the caller
+    then falls back to the BOE's own parsed rate, same as if no debit advice
+    had ever been uploaded.
+    """
+    rows = _client.table('boe_debit_advices').select('fx_rate,computed_bank_charges').eq('be_no', be_no).execute().data
+    rates = [r['fx_rate'] for r in rows if r.get('fx_rate') is not None]
+    avg_rate = round(sum(rates) / len(rates), 4) if rates else None
+    total_charges = round(sum(r.get('computed_bank_charges') or 0.0 for r in rows), 2)
+    return avg_rate, total_charges
+
+
+def _apply_debit_advice_aggregates(be_no: str) -> None:
+    """
+    Recomputes the combined exchange rate / bank charges from whatever debit
+    advices currently exist for this BOE and writes them as the confirmed
+    ('fixed') variable fields -- called after every upload and every undo, so
+    the two are always rebuilt from the current set rather than patched
+    incrementally.
+    """
+    avg_rate, total_charges = _debit_advice_aggregates(be_no)
+    if avg_rate is not None:
+        update_field(be_no, 'exchange_rate', avg_rate, 'fixed')
+    else:
+        _restore_field(be_no, 'exchange_rate', None, None)
+    if total_charges:
+        update_field(be_no, 'debit_advice_bank_charges', total_charges, 'fixed')
+    else:
+        _restore_field(be_no, 'debit_advice_bank_charges', None, None)
 
 
 def _restore_field(be_no: str, field_name: str, prev_value, prev_status) -> None:
@@ -380,14 +431,16 @@ def _restore_field(be_no: str, field_name: str, prev_value, prev_status) -> None
 
 
 def save_debit_advice(be_no: str, storage_path: str, file_name: str, fields: dict,
-                       computed_bank_charges: float, matched: bool, matched_total: float | None,
+                       computed_bank_charges: float, matched: bool, invoice_total: float | None,
                        overridden: bool) -> dict:
     """
-    Records the debit advice and snapshots whatever exchange_rate /
-    debit_advice_bank_charges it's about to overwrite -- what
-    undo_debit_advice restores -- then applies the advice's FX rate and
-    computed bank charges as confirmed ('fixed') values, the same status a
-    person manually confirming a figure would set.
+    Records the debit advice (one of possibly several on this BOE -- an
+    advance and a later balance payment both land here), snapshots whatever
+    exchange_rate / debit_advice_bank_charges happened to hold just before
+    this insert (kept for audit only -- undo no longer restores from this,
+    see undo_debit_advice), then rebuilds both fields from every debit
+    advice now on the BOE: exchange_rate becomes the average fx_rate across
+    all of them, debit_advice_bank_charges the sum of all their charges.
     """
     existing = _client.table('boe_variable_fields').select('*').eq('be_no', be_no).limit(1).execute().data
     row = existing[0] if existing else {}
@@ -404,7 +457,7 @@ def save_debit_advice(be_no: str, storage_path: str, file_name: str, fields: dic
         'gst_on_ccy_fees': fields.get('gst_on_ccy_fees'),
         'computed_bank_charges': computed_bank_charges,
         'invoice_value_matched': matched,
-        'matched_invoice_total': matched_total,
+        'matched_invoice_total': invoice_total,
         'overridden': overridden,
         'prev_exchange_rate': row.get('exchange_rate'),
         'prev_exchange_rate_status': row.get('exchange_rate_status'),
@@ -413,21 +466,21 @@ def save_debit_advice(be_no: str, storage_path: str, file_name: str, fields: dic
     }
     created = _client.table('boe_debit_advices').insert(advice_row).execute().data[0]
 
-    if fields.get('fx_rate') is not None:
-        update_field(be_no, 'exchange_rate', float(fields['fx_rate']), 'fixed')
-    update_field(be_no, 'debit_advice_bank_charges', float(computed_bank_charges), 'fixed')
+    _apply_debit_advice_aggregates(be_no)
 
     return created
 
 
 def undo_debit_advice(be_no: str, advice_id: int) -> bool:
     """
-    Reverses one debit advice upload: restores exchange_rate and
-    debit_advice_bank_charges to whatever they were immediately before it
-    was applied, trashes the Drive file (recoverable from the Shared
-    Drive's trash, see drive_client.trash_document), and removes the
-    boe_documents index row and this boe_debit_advices row. Returns False
-    if no such advice exists for this BOE.
+    Reverses one debit advice upload -- which may be one of several on this
+    BOE, and not necessarily the most recent -- by removing it and rebuilding
+    exchange_rate / debit_advice_bank_charges from whichever advices remain.
+    With none left, both fall back to no confirmed value at all, same as if
+    no debit advice had ever been uploaded for this BOE. Also trashes the
+    Drive file (recoverable from the Shared Drive's trash, see
+    drive_client.trash_document) and removes the boe_documents index row.
+    Returns False if no such advice exists for this BOE.
     """
     existing = _client.table('boe_debit_advices').select('*').eq('id', advice_id).eq('be_no', be_no)\
         .limit(1).execute().data
@@ -435,11 +488,9 @@ def undo_debit_advice(be_no: str, advice_id: int) -> bool:
         return False
     advice = existing[0]
 
-    _restore_field(be_no, 'exchange_rate', advice.get('prev_exchange_rate'), advice.get('prev_exchange_rate_status'))
-    _restore_field(be_no, 'debit_advice_bank_charges',
-                    advice.get('prev_debit_advice_bank_charges'), advice.get('prev_debit_advice_bank_charges_status'))
+    _client.table('boe_debit_advices').delete().eq('id', advice_id).execute()
+    _apply_debit_advice_aggregates(be_no)
 
     drive_client.trash_document(advice['storage_path'])
     _client.table('boe_documents').delete().eq('be_no', be_no).eq('storage_path', advice['storage_path']).execute()
-    _client.table('boe_debit_advices').delete().eq('id', advice_id).execute()
     return True

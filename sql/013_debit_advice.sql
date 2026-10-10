@@ -25,11 +25,13 @@ comment on column boe_variable_fields.debit_advice_bank_charges is
   'Bill Commission + Correspondent Bank Charges + (GST on CCY Purchase/Sale Fees / 0.18), computed from an uploaded Yes Bank debit advice. Separate from bank_charges/own_bank_charges.';
 
 
--- One row per debit advice uploaded against a BOE. This both indexes the
--- Drive file (via boe_documents, doc_type = 'DEBIT_ADVICE') and holds enough
--- of a snapshot to undo the upload: a mistaken upload has to put
--- exchange_rate and debit_advice_bank_charges back exactly where they were,
--- not just to some default.
+-- One row per debit advice uploaded against a BOE -- there can be more than
+-- one (e.g. a partial advance, then a balance payment once goods are
+-- received): boe_variable_fields.exchange_rate is the AVERAGE fx_rate across
+-- every row here for a BOE, and debit_advice_bank_charges is their SUM, both
+-- rebuilt from scratch on every upload and every undo (see
+-- _apply_debit_advice_aggregates in supabase_client.py). This also indexes
+-- the Drive file (via boe_documents, doc_type = 'DEBIT_ADVICE').
 create table if not exists boe_debit_advices (
   id                              bigint generated always as identity primary key,
   be_no                           text not null references boes(be_no) on delete cascade,
@@ -51,9 +53,12 @@ create table if not exists boe_debit_advices (
   matched_invoice_total           numeric,
   overridden                      boolean not null default false,
 
-  -- Snapshot of what exchange_rate / debit_advice_bank_charges were
-  -- immediately before this upload applied its values -- what "undo" (the
-  -- DELETE /boe/{be_no}/debit-advice/{id} endpoint) restores.
+  -- Snapshot of what exchange_rate / debit_advice_bank_charges happened to
+  -- hold immediately before this row was inserted. Audit trail only --
+  -- undo no longer restores from these (it recomputes the average/sum from
+  -- whatever boe_debit_advices rows remain after the delete instead, since
+  -- a BOE can have several and undoing one in the middle isn't "restore the
+  -- previous state", it's "rebuild from what's left").
   prev_exchange_rate                     numeric,
   prev_exchange_rate_status              text,
   prev_debit_advice_bank_charges         numeric,

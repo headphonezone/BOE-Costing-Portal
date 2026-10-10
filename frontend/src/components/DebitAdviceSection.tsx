@@ -12,6 +12,7 @@ type MismatchWarning = {
   billAmount: number | null;
   billCurrency: string | null;
   invoiceTotal: number | null;
+  runningTotal: number | null;
 };
 
 type State =
@@ -24,11 +25,15 @@ type State =
 /**
  * Upload panel plus history for Yes Bank debit advices against one BOE.
  *
- * Each upload compares the advice's BILL AMOUNT against boe.inv_value_usd
- * (see check_invoice_value_match in supabase_client.py) before applying
- * anything -- a mismatch comes back as a warning, not an error, and the
- * operator can re-submit with override to proceed anyway if they know it's
- * still the right BOE (e.g. a partial advance).
+ * A BOE can have more than one debit advice -- a partial advance followed
+ * later by a balance payment -- so uploads don't overwrite each other: the
+ * BOE's confirmed exchange rate becomes the AVERAGE fx_rate across every
+ * debit advice on it, and its debit-advice bank charges become their SUM
+ * (see _apply_debit_advice_aggregates in supabase_client.py). Each upload
+ * compares the RUNNING TOTAL of every advice so far against boe.inv_value_usd
+ * (see check_invoice_value_match) -- landing under it is a normal partial
+ * payment, so only exceeding it comes back as a mismatch warning, which the
+ * operator can override if they know it's still the right BOE.
  */
 export function DebitAdviceSection({
   be_no,
@@ -75,6 +80,7 @@ export function DebitAdviceSection({
             billAmount: data.bill_amount,
             billCurrency: data.bill_currency,
             invoiceTotal: data.invoice_total,
+            runningTotal: data.running_total,
           },
         });
         return;
@@ -117,6 +123,13 @@ export function DebitAdviceSection({
   }
 
   const busy = state.status === "uploading";
+
+  const ratedAdvices = debitAdvices.filter((a) => a.fx_rate != null);
+  const combinedRate =
+    ratedAdvices.length > 0
+      ? ratedAdvices.reduce((sum, a) => sum + (a.fx_rate ?? 0), 0) / ratedAdvices.length
+      : null;
+  const combinedCharges = debitAdvices.reduce((sum, a) => sum + (a.computed_bank_charges ?? 0), 0);
 
   return (
     <section className="mb-10">
@@ -173,6 +186,20 @@ export function DebitAdviceSection({
                 </tr>
               ))}
             </tbody>
+            {debitAdvices.length > 1 && (
+              <tfoot>
+                <tr className="border-t-2 border-line bg-slate-50 font-medium dark:bg-slate-800/40">
+                  <td className="px-3 py-2" colSpan={2}>
+                    Combined (applied to this BOE&apos;s costing)
+                  </td>
+                  <td className="tnum px-3 py-2 text-right">
+                    {combinedRate !== null ? combinedRate.toFixed(4) : "—"}
+                  </td>
+                  <td className="tnum px-3 py-2 text-right">{inr(combinedCharges)}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
@@ -215,10 +242,11 @@ export function DebitAdviceSection({
 
         {state.status === "mismatch" && (
           <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-            <p className="font-medium">This debit advice doesn&apos;t match this BOE</p>
+            <p className="font-medium">Debit advices on this BOE would exceed its invoice value</p>
             <p className="mt-1">
-              Bill amount {state.warning.billCurrency} {state.warning.billAmount?.toLocaleString()}{" "}
-              vs invoice value {usd(state.warning.invoiceTotal)}.
+              This upload: {state.warning.billCurrency} {state.warning.billAmount?.toLocaleString()}. Including it,
+              every debit advice on this BOE totals {state.warning.billCurrency} {state.warning.runningTotal?.toLocaleString()},
+              against an invoice value of {usd(state.warning.invoiceTotal)}.
             </p>
             <div className="mt-3 flex flex-wrap gap-3">
               <button
@@ -248,14 +276,15 @@ export function DebitAdviceSection({
 
         {state.status === "done" && (
           <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-4 text-sm text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
-            Applied: exchange rate {state.fxRate}, bank charges {inr(state.computedBankCharges)}.
+            This payment: exchange rate {state.fxRate}, bank charges {inr(state.computedBankCharges)}.
           </div>
         )}
 
         <p className="mt-3 text-xs text-muted">
-          Sets the confirmed exchange rate and adds a bank-charges figure to costing, separate
-          from the manually entered bank charges. Undo removes the file and restores whatever
-          those figures held before this upload.
+          A partial advance followed later by a balance payment both count: the BOE&apos;s
+          confirmed exchange rate is the average rate across every debit advice uploaded here,
+          and its bank charges are their sum. Undo removes one advice and recomputes both from
+          whatever remains.
         </p>
       </div>
     </section>

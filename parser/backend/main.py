@@ -207,10 +207,12 @@ async def upload_debit_advice(
 ):
     """
     Uploads a Yes Bank import advance remittance debit advice against an
-    already-uploaded BOE: sets the BOE's exchange_rate to the advice's FX
-    rate (confirmed, not provisional) and adds a debit-advice-specific bank
-    charges figure to costing, separate from the operator-typed
-    bank_charges/own_bank_charges fields.
+    already-uploaded BOE. A BOE can have more than one -- a partial advance
+    followed later by a balance payment, each its own debit advice -- so this
+    doesn't simply overwrite the confirmed exchange_rate / bank charges:
+    exchange_rate becomes the average FX rate across every debit advice now
+    on the BOE, and debit_advice_bank_charges becomes their sum. See
+    supabase_client.save_debit_advice / _apply_debit_advice_aggregates.
 
     Not admin-gated -- same open-endpoint precedent as /boe/upload, since
     the browser has no PARSER_ADMIN_TOKEN to offer it (see the access
@@ -234,7 +236,11 @@ async def upload_debit_advice(
     if computed_bank_charges is None:
         raise HTTPException(422, "Could not find the GST on CCY Purchase/Sale Fees line on this debit advice")
 
-    matched, matched_total = db.check_invoice_value_match(be_no, fields.get('bill_amount'))
+    # Checked against the RUNNING TOTAL of every debit advice on this BOE,
+    # this one included -- a partial advance landing under the invoice value
+    # is expected (a balance payment follows later as a second debit
+    # advice), so only exceeding it counts as a mismatch.
+    matched, invoice_total, running_total = db.check_invoice_value_match(be_no, fields.get('bill_amount'))
 
     if not matched and not override:
         # Nothing is saved or applied yet -- the caller re-POSTs with
@@ -243,10 +249,12 @@ async def upload_debit_advice(
             'matched': False,
             'bill_amount': fields.get('bill_amount'),
             'bill_currency': fields.get('bill_currency'),
-            'invoice_total': matched_total,
+            'invoice_total': invoice_total,
+            'running_total': running_total,
             'message': (
-                f"This debit advice's BILL AMOUNT ({fields.get('bill_currency')} {fields.get('bill_amount')}) "
-                f"doesn't match this BOE's invoice value ({matched_total}). Re-upload with override to proceed anyway."
+                f"Including this upload, debit advices on this BOE now total "
+                f"{fields.get('bill_currency')} {running_total}, which is more than this BOE's "
+                f"invoice value ({invoice_total}). Re-upload with override to proceed anyway."
             ),
         }
 
@@ -254,7 +262,7 @@ async def upload_debit_advice(
                                        doc_type='DEBIT_ADVICE')
     advice = db.save_debit_advice(
         be_no, storage_path, file.filename or "debit_advice.pdf", fields,
-        computed_bank_charges, matched, matched_total, overridden=not matched,
+        computed_bank_charges, matched, invoice_total, overridden=not matched,
     )
     return {'matched': matched, 'debit_advice': advice}
 

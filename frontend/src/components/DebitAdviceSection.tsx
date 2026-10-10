@@ -4,7 +4,12 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL } from "@/lib/supabase";
 import { date, inr, usd } from "@/lib/format";
-import type { BoeDebitAdvice } from "@/lib/types";
+import type { BoeDebitAdvice, DebitAdviceBank } from "@/lib/types";
+
+const BANK_LABELS: Record<DebitAdviceBank, string> = {
+  YES_BANK: "Yes Bank",
+  SBI: "SBI",
+};
 
 type MismatchWarning = {
   fileName: string;
@@ -18,7 +23,7 @@ type MismatchWarning = {
 type State =
   | { status: "idle" }
   | { status: "uploading"; fileName: string }
-  | { status: "mismatch"; warning: MismatchWarning; file: File; password: string }
+  | { status: "mismatch"; warning: MismatchWarning; file: File; password: string; bank: DebitAdviceBank }
   | { status: "error"; fileName: string; message: string }
   | { status: "done"; be_no: string; computedBankCharges: number; fxRate: number };
 
@@ -44,15 +49,17 @@ export function DebitAdviceSection({
 }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ status: "idle" });
+  const [bank, setBank] = useState<DebitAdviceBank>("YES_BANK");
   const [password, setPassword] = useState("");
   const [undoingId, setUndoingId] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function submit(file: File, pw: string, override: boolean) {
+  async function submit(file: File, pw: string, bankChoice: DebitAdviceBank, override: boolean) {
     setState({ status: "uploading", fileName: file.name });
 
     const body = new FormData();
     body.append("file", file);
+    body.append("bank", bankChoice);
     body.append("password", pw);
     body.append("override", String(override));
 
@@ -74,6 +81,7 @@ export function DebitAdviceSection({
           status: "mismatch",
           file,
           password: pw,
+          bank: bankChoice,
           warning: {
             fileName: file.name,
             message: data.message,
@@ -143,6 +151,7 @@ export function DebitAdviceSection({
             <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-muted dark:bg-slate-800/60">
               <tr>
                 <th className="px-3 py-2.5">Uploaded</th>
+                <th className="px-3 py-2.5">Bank</th>
                 <th className="px-3 py-2.5 text-right">Bill amount</th>
                 <th className="px-3 py-2.5 text-right">FX rate</th>
                 <th className="px-3 py-2.5 text-right">Bank charges</th>
@@ -154,6 +163,7 @@ export function DebitAdviceSection({
               {debitAdvices.map((a) => (
                 <tr key={a.id} className="border-t border-line">
                   <td className="px-3 py-2 text-muted">{date(a.uploaded_at)}</td>
+                  <td className="px-3 py-2">{BANK_LABELS[a.bank] ?? a.bank}</td>
                   <td className="tnum px-3 py-2 text-right">
                     {a.bill_currency ?? ""} {a.bill_amount?.toLocaleString() ?? "—"}
                   </td>
@@ -189,7 +199,7 @@ export function DebitAdviceSection({
             {debitAdvices.length > 1 && (
               <tfoot>
                 <tr className="border-t-2 border-line bg-slate-50 font-medium dark:bg-slate-800/40">
-                  <td className="px-3 py-2" colSpan={2}>
+                  <td className="px-3 py-2" colSpan={3}>
                     Combined (applied to this BOE&apos;s costing)
                   </td>
                   <td className="tnum px-3 py-2 text-right">
@@ -206,6 +216,21 @@ export function DebitAdviceSection({
 
       <div className="rounded-xl border border-line bg-surface p-5">
         <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wide text-muted">Bank</label>
+            <select
+              value={bank}
+              onChange={(e) => setBank(e.target.value as DebitAdviceBank)}
+              disabled={busy}
+              className="rounded-lg border border-line bg-background px-3 py-1.5 text-sm"
+            >
+              {(Object.keys(BANK_LABELS) as DebitAdviceBank[]).map((b) => (
+                <option key={b} value={b}>
+                  {BANK_LABELS[b]}
+                </option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="mb-1 block text-[11px] uppercase tracking-wide text-muted">
               PDF password
@@ -225,7 +250,7 @@ export function DebitAdviceSection({
             disabled={busy}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
           >
-            {busy ? "Uploading…" : "Upload debit advice"}
+            {busy ? "Uploading…" : `Upload ${BANK_LABELS[bank]} debit advice`}
           </button>
           <input
             ref={inputRef}
@@ -234,7 +259,7 @@ export function DebitAdviceSection({
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) submit(file, password, false);
+              if (file) submit(file, password, bank, false);
               e.target.value = "";
             }}
           />
@@ -251,7 +276,7 @@ export function DebitAdviceSection({
             <div className="mt-3 flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => submit(state.file, state.password, true)}
+                onClick={() => submit(state.file, state.password, state.bank, true)}
                 className="rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white transition hover:bg-amber-700"
               >
                 Upload anyway

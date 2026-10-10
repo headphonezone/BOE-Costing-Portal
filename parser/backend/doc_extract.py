@@ -137,14 +137,13 @@ def parse_other(text: str) -> dict:
     return {'doc_date': _find_date(text)}
 
 
-def parse_debit_advice(text: str) -> dict:
+def _parse_yes_bank_debit_advice(text: str) -> dict:
     """
     A Yes Bank import advance remittance debit advice: an advance payment
     made to a supplier before the BOE arrives, whose FX rate becomes the
     BOE's confirmed exchange rate and whose bank charges get added to
     costing separately from the operator-typed bank_charges field.
 
-    Only Yes Bank's layout is known (the one sample this was built against).
     A field that doesn't match comes back None rather than raising -- the
     caller decides whether a missing bill_amount or fx_rate means the upload
     can't proceed.
@@ -176,6 +175,61 @@ def parse_debit_advice(text: str) -> dict:
         'gst_on_ccy_fees': gst_on_ccy_fees,
         'correspondent_bank_charges': correspondent_bank_charges,
     }
+
+
+def _parse_sbi_debit_advice(text: str) -> dict:
+    """
+    An SBI "Advice of Advance Payment": same job as the Yes Bank advice --
+    an advance payment made before the BOE arrives -- under a different
+    layout and a different charges formula. Its "DETAILS OF CHARGES" table
+    prints Remittance/SWIFT/MTT/Other charges as AMOUNT (INR) + GST(INR) =
+    TOTAL(INR) columns; only the pre-GST AMOUNT column is taken for each
+    (their GST is shown but not added, same GST-exclusive rule as Yes Bank).
+    Service tax Cess GST has no such breakdown -- the printed figure is
+    itself a GST amount needing reversal, the same trick as Yes Bank's
+    GST-on-CCY-fees line.
+    """
+    bill_amount, bill_currency = None, None
+    m = re.search(r'Adv\.?\s*Payment\s+Amount\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
+    if m:
+        bill_currency, bill_amount = m.group(1).upper(), float(m.group(2).replace(',', ''))
+
+    fx_rate = None
+    m = re.search(r'\bRate\s*:?\s*([\d.]+)', text, re.IGNORECASE)
+    if m:
+        fx_rate = float(m.group(1))
+
+    def _charge_amount(label_pat: str) -> float | None:
+        # The AMOUNT (INR) column is the first number after the label --
+        # GST(INR) and TOTAL(INR) follow it on the same row.
+        m = re.search(rf'{label_pat}\s+([\d,]+\.?\d*)', text, re.IGNORECASE)
+        return float(m.group(1).replace(',', '')) if m else None
+
+    return {
+        'doc_date': _find_date(text),
+        'bill_amount': bill_amount,
+        'bill_currency': bill_currency,
+        'fx_rate': fx_rate,
+        'remittance_charge': _charge_amount(r'Remittance\s+charges'),
+        'swift_charge': _charge_amount(r'SWIFT\s+charges'),
+        'mtt_charge': _charge_amount(r'MTT\s+charges'),
+        'other_charge': _charge_amount(r'Other\s+charges'),
+        'service_tax_cess_gst': _charge_amount(r'Service\s+tax\s+Cess\s+GST'),
+    }
+
+
+_DEBIT_ADVICE_PARSERS = {
+    'YES_BANK': _parse_yes_bank_debit_advice,
+    'SBI': _parse_sbi_debit_advice,
+}
+
+
+def parse_debit_advice(text: str, bank: str = 'YES_BANK') -> dict:
+    """Dispatches to the bank-specific debit advice parser."""
+    parser = _DEBIT_ADVICE_PARSERS.get(bank)
+    if parser is None:
+        raise ValueError(f"Unknown debit advice bank: {bank}")
+    return parser(text)
 
 
 _PARSERS = {

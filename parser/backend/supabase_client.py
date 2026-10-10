@@ -332,12 +332,28 @@ GST_RATE = 0.18
 INVOICE_VALUE_MATCH_TOLERANCE = 0.01
 
 
-def compute_debit_advice_charges(fields: dict) -> float | None:
+def compute_debit_advice_charges(fields: dict, bank: str = 'YES_BANK') -> float | None:
     """
-    Bill Commission + Correspondent Bank Charges + (GST on CCY Purchase/Sale
-    Fees / 0.18). None if the GST-on-CCY-fees figure -- the one field this
-    can't do without -- wasn't found on the document.
+    Yes Bank: Bill Commission + Correspondent Bank Charges + (GST on CCY
+    Purchase/Sale Fees / 0.18).
+
+    SBI: Remittance + SWIFT + MTT + Other charges (each already pre-GST) +
+    (Service tax Cess GST / 0.18) -- that line has no separate GST
+    breakdown of its own, so the printed figure needs the same reversal.
+
+    None if the one GST-flavoured figure each formula can't do without
+    wasn't found on the document.
     """
+    if bank == 'SBI':
+        service_tax = fields.get('service_tax_cess_gst')
+        if service_tax is None:
+            return None
+        remittance = fields.get('remittance_charge') or 0.0
+        swift = fields.get('swift_charge') or 0.0
+        mtt = fields.get('mtt_charge') or 0.0
+        other = fields.get('other_charge') or 0.0
+        return round(remittance + swift + mtt + other + (service_tax / GST_RATE), 2)
+
     gst_ccy = fields.get('gst_on_ccy_fees')
     if gst_ccy is None:
         return None
@@ -430,31 +446,40 @@ def _restore_field(be_no: str, field_name: str, prev_value, prev_status) -> None
     }).execute()
 
 
-def save_debit_advice(be_no: str, storage_path: str, file_name: str, fields: dict,
+def save_debit_advice(be_no: str, storage_path: str, file_name: str, bank: str, fields: dict,
                        computed_bank_charges: float, matched: bool, invoice_total: float | None,
                        overridden: bool) -> dict:
     """
     Records the debit advice (one of possibly several on this BOE -- an
-    advance and a later balance payment both land here), snapshots whatever
-    exchange_rate / debit_advice_bank_charges happened to hold just before
-    this insert (kept for audit only -- undo no longer restores from this,
-    see undo_debit_advice), then rebuilds both fields from every debit
-    advice now on the BOE: exchange_rate becomes the average fx_rate across
-    all of them, debit_advice_bank_charges the sum of all their charges.
+    advance and a later balance payment both land here, each possibly a
+    different bank's format), snapshots whatever exchange_rate /
+    debit_advice_bank_charges happened to hold just before this insert
+    (kept for audit only -- undo no longer restores from this, see
+    undo_debit_advice), then rebuilds both fields from every debit advice
+    now on the BOE: exchange_rate becomes the average fx_rate across all of
+    them, debit_advice_bank_charges the sum of all their charges.
     """
     existing = _client.table('boe_variable_fields').select('*').eq('be_no', be_no).limit(1).execute().data
     row = existing[0] if existing else {}
 
     advice_row = {
         'be_no': be_no,
+        'bank': bank,
         'storage_path': storage_path,
         'file_name': file_name,
         'bill_amount': fields.get('bill_amount'),
         'bill_currency': fields.get('bill_currency'),
         'fx_rate': fields.get('fx_rate'),
+        # Yes Bank fields -- None on an SBI row.
         'bill_commission': fields.get('bill_commission'),
         'correspondent_bank_charges': fields.get('correspondent_bank_charges'),
         'gst_on_ccy_fees': fields.get('gst_on_ccy_fees'),
+        # SBI fields -- None on a Yes Bank row.
+        'remittance_charge': fields.get('remittance_charge'),
+        'swift_charge': fields.get('swift_charge'),
+        'mtt_charge': fields.get('mtt_charge'),
+        'other_charge': fields.get('other_charge'),
+        'service_tax_cess_gst': fields.get('service_tax_cess_gst'),
         'computed_bank_charges': computed_bank_charges,
         'invoice_value_matched': matched,
         'matched_invoice_total': invoice_total,

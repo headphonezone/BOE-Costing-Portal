@@ -202,22 +202,29 @@ async def upload_supporting_document(be_no: str, doc_type: str = "OTHER", file: 
 async def upload_debit_advice(
     be_no: str,
     file: UploadFile = File(...),
+    bank: str = Form("YES_BANK"),
     password: str = Form(""),
     override: bool = Form(False),
 ):
     """
-    Uploads a Yes Bank import advance remittance debit advice against an
-    already-uploaded BOE. A BOE can have more than one -- a partial advance
-    followed later by a balance payment, each its own debit advice -- so this
-    doesn't simply overwrite the confirmed exchange_rate / bank charges:
-    exchange_rate becomes the average FX rate across every debit advice now
-    on the BOE, and debit_advice_bank_charges becomes their sum. See
+    Uploads an import advance payment debit advice against an
+    already-uploaded BOE -- either a Yes Bank or an SBI format, picked by
+    `bank` (see doc_extract.parse_debit_advice / supabase_client's
+    compute_debit_advice_charges for the two formulas). A BOE can have more
+    than one advice, of either bank -- a partial advance followed later by a
+    balance payment, each its own upload -- so this doesn't simply overwrite
+    the confirmed exchange_rate / bank charges: exchange_rate becomes the
+    average FX rate across every debit advice now on the BOE, and
+    debit_advice_bank_charges becomes their sum. See
     supabase_client.save_debit_advice / _apply_debit_advice_aggregates.
 
     Not admin-gated -- same open-endpoint precedent as /boe/upload, since
     the browser has no PARSER_ADMIN_TOKEN to offer it (see the access
     control note above _parse_boe_pdf).
     """
+    if bank not in ('YES_BANK', 'SBI'):
+        raise HTTPException(422, "bank must be 'YES_BANK' or 'SBI'")
+
     existing = db.get_boe(be_no)
     if not existing:
         raise HTTPException(404, f"No BOE found for {be_no}")
@@ -228,13 +235,14 @@ async def upload_debit_advice(
     except Exception as e:
         raise HTTPException(400, f"Could not open PDF (wrong password?): {e}")
 
-    fields = doc_extract.parse_debit_advice(text)
+    fields = doc_extract.parse_debit_advice(text, bank=bank)
     if fields.get('bill_amount') is None or fields.get('fx_rate') is None:
-        raise HTTPException(422, "Could not find BILL AMOUNT or FX RATE on this debit advice")
+        raise HTTPException(422, "Could not find the payment amount or exchange rate on this debit advice")
 
-    computed_bank_charges = db.compute_debit_advice_charges(fields)
+    computed_bank_charges = db.compute_debit_advice_charges(fields, bank=bank)
     if computed_bank_charges is None:
-        raise HTTPException(422, "Could not find the GST on CCY Purchase/Sale Fees line on this debit advice")
+        missing = "GST on CCY Purchase/Sale Fees" if bank == 'YES_BANK' else "Service tax Cess GST"
+        raise HTTPException(422, f"Could not find the {missing} line on this debit advice")
 
     # Checked against the RUNNING TOTAL of every debit advice on this BOE,
     # this one included -- a partial advance landing under the invoice value
@@ -261,7 +269,7 @@ async def upload_debit_advice(
     storage_path = db.upload_document(be_no, file.filename or f"{be_no}_debit_advice.pdf", file_bytes,
                                        doc_type='DEBIT_ADVICE')
     advice = db.save_debit_advice(
-        be_no, storage_path, file.filename or "debit_advice.pdf", fields,
+        be_no, storage_path, file.filename or "debit_advice.pdf", bank, fields,
         computed_bank_charges, matched, invoice_total, overridden=not matched,
     )
     return {'matched': matched, 'debit_advice': advice}

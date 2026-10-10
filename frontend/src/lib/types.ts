@@ -95,23 +95,36 @@ export type BoeVariableFields = {
 
 export type FieldStatus = "provisional" | "fixed";
 
+/** Which bank format a debit advice was parsed as -- decides its formula and which fields are populated. */
+export type DebitAdviceBank = "YES_BANK" | "SBI";
+
 /**
- * A Yes Bank import advance remittance debit advice uploaded against a BOE.
- * Applying one sets exchange_rate to fx_rate and debit_advice_bank_charges to
- * computed_bank_charges (both 'fixed'); undoing it restores whatever those
- * held immediately before, via prev_* below.
+ * An import advance payment debit advice uploaded against a BOE, from
+ * either bank. A BOE's exchange_rate is the average fx_rate across every
+ * debit advice on it (of either bank), and debit_advice_bank_charges is
+ * their sum -- not simply this one advice's own values. prev_* is audit
+ * only; undo recomputes from whatever advices remain rather than restoring
+ * these.
  */
 export type BoeDebitAdvice = {
   id: number;
   be_no: string;
+  bank: DebitAdviceBank;
   storage_path: string;
   file_name: string | null;
   bill_amount: number | null;
   bill_currency: string | null;
   fx_rate: number | null;
+  // Yes Bank fields -- null on an SBI row.
   bill_commission: number | null;
   correspondent_bank_charges: number | null;
   gst_on_ccy_fees: number | null;
+  // SBI fields -- null on a Yes Bank row.
+  remittance_charge: number | null;
+  swift_charge: number | null;
+  mtt_charge: number | null;
+  other_charge: number | null;
+  service_tax_cess_gst: number | null;
   computed_bank_charges: number | null;
   invoice_value_matched: boolean | null;
   matched_invoice_total: number | null;

@@ -170,6 +170,7 @@ export type Scenario = {
    */
   exchange_rate_is_actual: boolean;
   freight_is_actual: boolean;
+  clearance_is_actual: boolean;
   freight_mode: FreightMode;
   freight_basis: FreightBasis;
   freight_rate: number | null;

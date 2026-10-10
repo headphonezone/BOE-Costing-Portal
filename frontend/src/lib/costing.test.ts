@@ -119,6 +119,7 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     exchange_rate: null,
     exchange_rate_is_actual: false,
     freight_is_actual: false,
+    clearance_is_actual: false,
     freight_mode: "AIR",
     freight_basis: "LUMP_SUM",
     freight_rate: null,
@@ -223,6 +224,12 @@ describe("expense pool", () => {
     expect(pool.debitAdviceBankCharges).toBe(4526.89);
     expect(pool.bankCharges).toBe(500); // untouched
     expect(pool.total).toBeCloseTo(9000 + 4526.89, 8);
+  });
+
+  it("inherits the 10000 clearance default into a scenario left blank", () => {
+    const noClearance: BoeVariableFields = { ...variableFields, clearing_charges: null };
+    const pool = resolveScenarioInputs(boe, noClearance, scenario({ clearance_inr: null })).expenses;
+    expect(pool.clearance).toBe(10000);
   });
 
   it("inherits debit_advice_bank_charges into a scenario unconditionally", () => {

@@ -186,17 +186,22 @@ def _parse_yes_bank_debit_advice(text: str) -> dict:
     }
 
 
-def _parse_sbi_debit_advice(text: str) -> dict:
+def _sbi_charge_amount(text: str, label_pat: str) -> float | None:
+    # The AMOUNT (INR) column is the first number after the label -- GST(INR)
+    # and TOTAL(INR) follow it on the same row.
+    m = re.search(rf'{label_pat}\s+([\d,]+\.?\d*)', text, re.IGNORECASE)
+    return float(m.group(1).replace(',', '')) if m else None
+
+
+def _parse_sbi_advance_payment_advice(text: str) -> dict:
     """
-    An SBI "Advice of Advance Payment": same job as the Yes Bank advice --
-    an advance payment made before the BOE arrives -- under a different
-    layout and a different charges formula. Its "DETAILS OF CHARGES" table
-    prints Remittance/SWIFT/MTT/Other charges as AMOUNT (INR) + GST(INR) =
-    TOTAL(INR) columns; only the pre-GST AMOUNT column is taken for each
-    (their GST is shown but not added, same GST-exclusive rule as Yes Bank).
-    Service tax Cess GST has no such breakdown -- the printed figure is
-    itself a GST amount needing reversal, the same trick as Yes Bank's
-    GST-on-CCY-fees line.
+    An SBI "Advice of Advance Payment": an advance payment made before the
+    BOE arrives. Its "DETAILS OF CHARGES" table prints Remittance/SWIFT/
+    MTT/Other charges as AMOUNT (INR) + GST(INR) = TOTAL(INR) columns; only
+    the pre-GST AMOUNT column is taken for each (their GST is shown but not
+    added, same GST-exclusive rule as Yes Bank). Service tax Cess GST has no
+    such breakdown -- the printed figure is itself a GST amount needing
+    reversal, the same trick as Yes Bank's GST-on-CCY-fees line.
     """
     bill_amount, bill_currency = None, None
     m = re.search(r'Adv\.?\s*Payment\s+Amount\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
@@ -208,23 +213,82 @@ def _parse_sbi_debit_advice(text: str) -> dict:
     if m:
         fx_rate = float(m.group(1))
 
-    def _charge_amount(label_pat: str) -> float | None:
-        # The AMOUNT (INR) column is the first number after the label --
-        # GST(INR) and TOTAL(INR) follow it on the same row.
-        m = re.search(rf'{label_pat}\s+([\d,]+\.?\d*)', text, re.IGNORECASE)
-        return float(m.group(1).replace(',', '')) if m else None
+    return {
+        'doc_date': _find_date(text),
+        'bill_amount': bill_amount,
+        'bill_currency': bill_currency,
+        'fx_rate': fx_rate,
+        'remittance_charge': _sbi_charge_amount(text, r'Remittance\s+charges'),
+        'swift_charge': _sbi_charge_amount(text, r'SWIFT\s+charges'),
+        'mtt_charge': _sbi_charge_amount(text, r'MTT\s+charges'),
+        'other_charge': _sbi_charge_amount(text, r'Other\s+charges'),
+        'service_tax_cess_gst': _sbi_charge_amount(text, r'Service\s+tax\s+Cess\s+GST'),
+    }
+
+
+def _parse_sbi_bill_payment_advice(text: str) -> dict:
+    """
+    An SBI "Import Collection Bill Payment Advice": paying off a bill against
+    documents already collected, rather than an advance -- same job (an FX
+    rate and bank charges to apply to a BOE), different layout again. Its
+    charges table has seven lines instead of four; all seven are summed
+    (each pre-GST, AMOUNT (INR) column) plus Service tax Cess reversed out
+    of its GST the same way as the advance-payment advice's Service tax Cess
+    GST line. "Amount paid" (the actual amount debited) is preferred over
+    "Bill Amount" for bill_amount -- the two agree on a full payment, but
+    only "Amount paid" is right if a bill is ever settled partially.
+    """
+    bill_amount, bill_currency = None, None
+    m = re.search(r'Amount\s+paid\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
+    if not m:
+        m = re.search(r'Bill\s+Amount\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
+    if m:
+        bill_currency, bill_amount = m.group(1).upper(), float(m.group(2).replace(',', ''))
+
+    fx_rate = None
+    m = re.search(r'Rate\s+of\s+Conversion\s*:?\s*([\d.]+)', text, re.IGNORECASE)
+    if m:
+        fx_rate = float(m.group(1))
+
+    # Reused rather than adding four more DB columns for one document layout:
+    # mtt_charge <- Merchanting Trade Charges (MTT = Merchanting Trade),
+    # remittance_charge <- Commission Charges (the primary transaction fee,
+    # the same role Remittance charges plays on the advance-payment advice),
+    # other_charge <- Postage Charges + Other Charges + Commission Charges
+    # (Non Conversion) bundled together, since none of those three has its
+    # own column and all three are typically 0.
+    mtt_charge = _sbi_charge_amount(text, r'Merchanting\s+Trade\s+Charges')
+    postage = _sbi_charge_amount(text, r'Postage\s+Charges') or 0.0
+    other = _sbi_charge_amount(text, r'Other\s+Charges') or 0.0
+    commission_non_conv = _sbi_charge_amount(text, r'Commission\s+Charges\s*\(Non\s+Conversion\)') or 0.0
 
     return {
         'doc_date': _find_date(text),
         'bill_amount': bill_amount,
         'bill_currency': bill_currency,
         'fx_rate': fx_rate,
-        'remittance_charge': _charge_amount(r'Remittance\s+charges'),
-        'swift_charge': _charge_amount(r'SWIFT\s+charges'),
-        'mtt_charge': _charge_amount(r'MTT\s+charges'),
-        'other_charge': _charge_amount(r'Other\s+charges'),
-        'service_tax_cess_gst': _charge_amount(r'Service\s+tax\s+Cess\s+GST'),
+        # The negative lookahead excludes "Commission Charges(Non Conversion)"
+        # -- re.search would already stop at the plain "Commission Charges"
+        # line first since it appears earlier in the document, but this holds
+        # even if a future layout variant reorders the two.
+        'remittance_charge': _sbi_charge_amount(text, r'Commission\s+Charges(?!\s*\()'),
+        'swift_charge': _sbi_charge_amount(text, r'Swift\s+Charge'),
+        'mtt_charge': mtt_charge,
+        'other_charge': round(postage + other + commission_non_conv, 2),
+        'service_tax_cess_gst': _sbi_charge_amount(text, r'Service\s+tax\s+Cess(?!\s+GST)'),
     }
+
+
+def _parse_sbi_debit_advice(text: str) -> dict:
+    """
+    SBI has (at least) two debit advice layouts -- an advance payment and an
+    import collection bill payment -- so this dispatches on which one the
+    text actually is, by its own heading, rather than needing the operator
+    to pick between them in the UI: one "SBI" option covers both.
+    """
+    if re.search(r'IMPORT\s+COLLECTION\s+BILL\s+PAYMENT\s+ADVICE', text, re.IGNORECASE):
+        return _parse_sbi_bill_payment_advice(text)
+    return _parse_sbi_advance_payment_advice(text)
 
 
 _DEBIT_ADVICE_PARSERS = {

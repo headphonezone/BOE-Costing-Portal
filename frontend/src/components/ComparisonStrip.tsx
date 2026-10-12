@@ -22,6 +22,14 @@ export function ComparisonStrip({
 }) {
   const { totals, baseline, variant } = comparison;
 
+  // otherExpenseShare includes DO charges and Exporter inland freight --
+  // both get their own cell below, so they're subtracted back out here to
+  // avoid showing the same rupees twice. Subtracting the raw pool inputs
+  // rather than an apportioned share is exact: otherExpenseShare summed
+  // across every item always equals the pool total it was apportioned from.
+  const pureExpenses = (c: typeof variant) =>
+    c.totals.otherExpenseShare - c.inputs.expenses.doCharges - c.inputs.expenses.exporterInlandFreight;
+
   const cells: Cell[] = [
     {
       label: "Avg cost / pc",
@@ -73,9 +81,32 @@ export function ComparisonStrip({
     },
     {
       label: "Expenses",
-      value: inr(variant.totals.otherExpenseShare),
-      sub: `${delta(totals.otherExpenseShare)} excl. freight`,
-      diff: totals.otherExpenseShare,
+      value: inr(pureExpenses(variant)),
+      sub: `${delta(pureExpenses(variant) - pureExpenses(baseline))} excl. freight, DO charges, inland freight`,
+      diff: pureExpenses(variant) - pureExpenses(baseline),
+    },
+    // No separate "Actual" tick like freight/clearance have -- typing a
+    // value here marks it actual immediately. No "provisional" chip when
+    // blank either: StatusChip's provisional label is "As per BOE", which
+    // would be untrue of a field the BOE never carries, so blank just gets
+    // the plain default card styling.
+    {
+      label: "DO charges",
+      value: inr(variant.inputs.expenses.doCharges),
+      sub:
+        variant.inputs.expenses.doCharges === baseline.inputs.expenses.doCharges
+          ? "same as actual"
+          : `was ${inr(baseline.inputs.expenses.doCharges)}`,
+      status: scenario.do_charges_inr != null ? "actual" : undefined,
+    },
+    {
+      label: "Exporter inland freight",
+      value: inr(variant.inputs.expenses.exporterInlandFreight),
+      sub:
+        variant.inputs.expenses.exporterInlandFreight === baseline.inputs.expenses.exporterInlandFreight
+          ? "same as actual"
+          : `was ${inr(baseline.inputs.expenses.exporterInlandFreight)}`,
+      status: scenario.exporter_inland_freight_inr != null ? "actual" : undefined,
     },
     {
       label: "Goods payable",

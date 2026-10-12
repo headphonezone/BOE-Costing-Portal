@@ -228,8 +228,9 @@ async def upload_debit_advice(
     balance payment, each its own upload -- so this doesn't simply overwrite
     the confirmed exchange_rate / bank charges: exchange_rate becomes the
     average FX rate across every debit advice now on the BOE, and
-    debit_advice_bank_charges becomes their sum. See
-    supabase_client.save_debit_advice / _apply_debit_advice_aggregates.
+    own_bank_charges becomes their sum -- the same field manual entry uses,
+    not a separate bucket. See supabase_client.save_debit_advice /
+    _apply_debit_advice_aggregates.
 
     Not admin-gated -- same open-endpoint precedent as /boe/upload, since
     the browser has no PARSER_ADMIN_TOKEN to offer it (see the access
@@ -292,8 +293,8 @@ async def upload_debit_advice(
 def undo_debit_advice(be_no: str, advice_id: int):
     """
     Undoes one debit advice upload: restores exchange_rate and
-    debit_advice_bank_charges to what they were immediately before, and
-    removes the file and its record. Left open, same as the endpoint above.
+    own_bank_charges to what they were immediately before, and removes the
+    file and its record. Left open, same as the endpoint above.
     """
     undone = db.undo_debit_advice(be_no, advice_id)
     if not undone:
@@ -362,8 +363,16 @@ class FieldUpdate(BaseModel):
     status: str  # 'provisional' | 'fixed'
 
 
-@app.patch("/boe/{be_no}/field", dependencies=[Depends(require_admin)])
+@app.patch("/boe/{be_no}/field")
 def update_field(be_no: str, update: FieldUpdate):
+    """
+    Manually sets one actual-costing field (the record page's "Confirm
+    actual figures" editor). Opened up from admin-gated to match every other
+    mutating endpoint added this round (/boe/upload, the debit-advice
+    endpoints) -- the browser has no PARSER_ADMIN_TOKEN to offer it, and
+    nothing has ever called this with the token since there was no UI for it
+    until now.
+    """
     if update.status not in ('provisional', 'fixed'):
         raise HTTPException(422, "status must be 'provisional' or 'fixed'")
     try:
@@ -414,7 +423,6 @@ class SimulationExport(BaseModel):
     supplier_freight: float = 0
     bank_charges: float = 0
     own_bank_charges: float = 0
-    debit_advice_bank_charges: float = 0
     do_charges: float = 0
     exporter_inland_freight: float = 0
     items: list[SimulationItem] = []
@@ -478,7 +486,6 @@ def download_simulation_excel(be_no: str, sim: SimulationExport):
         ('supplier_freight', sim.supplier_freight),
         ('bank_charges', sim.bank_charges),
         ('own_bank_charges', sim.own_bank_charges),
-        ('debit_advice_bank_charges', sim.debit_advice_bank_charges),
         ('do_charges', sim.do_charges),
         ('exporter_inland_freight', sim.exporter_inland_freight),
     )}

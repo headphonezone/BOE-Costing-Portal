@@ -72,7 +72,7 @@ export type BoeDocument = {
   uploaded_at: string;
 };
 
-/** The nine provisional/fixed cost fields the existing dashboard maintains. */
+/** The eight provisional/fixed cost fields the existing dashboard maintains. */
 export type BoeVariableFields = {
   be_no: string;
   updated_at: string;
@@ -81,9 +81,14 @@ export type BoeVariableFields = {
   clearing_charges: number | null;
   supplier_freight: number | null;
   bank_charges: number | null;
+  /**
+   * Also where a debit advice's computed bank charges land (Bill Commission
+   * + Correspondent Bank Charges + GST-on-CCY-fees/0.18 for Yes Bank, the
+   * SBI-equivalent sum for SBI) -- fillable by PDF parsing or manual entry,
+   * whichever happened most recently wins. No separate debit-advice-only
+   * field; see supabase_client._apply_debit_advice_aggregates.
+   */
   own_bank_charges: number | null;
-  /** Bill Commission + Correspondent Bank Charges + (GST on CCY fees / 0.18) from a debit advice. Separate from bank_charges/own_bank_charges. */
-  debit_advice_bank_charges: number | null;
   do_charges: number | null;
   exporter_inland_freight: number | null;
   exchange_rate_status: FieldStatus | null;
@@ -92,7 +97,6 @@ export type BoeVariableFields = {
   supplier_freight_status: FieldStatus | null;
   bank_charges_status: FieldStatus | null;
   own_bank_charges_status: FieldStatus | null;
-  debit_advice_bank_charges_status: FieldStatus | null;
   do_charges_status: FieldStatus | null;
   exporter_inland_freight_status: FieldStatus | null;
 };
@@ -105,10 +109,11 @@ export type DebitAdviceBank = "YES_BANK" | "SBI";
 /**
  * An import advance payment debit advice uploaded against a BOE, from
  * either bank. A BOE's exchange_rate is the average fx_rate across every
- * debit advice on it (of either bank), and debit_advice_bank_charges is
- * their sum -- not simply this one advice's own values. prev_* is audit
- * only; undo recomputes from whatever advices remain rather than restoring
- * these.
+ * debit advice on it (of either bank), and own_bank_charges is their sum --
+ * not simply this one advice's own values. prev_* is audit only (the column
+ * names predate the own_bank_charges merge, but still mean "this BOE's
+ * bank-charges field, immediately before this insert"); undo recomputes
+ * from whatever advices remain rather than restoring these.
  */
 export type BoeDebitAdvice = {
   id: number;

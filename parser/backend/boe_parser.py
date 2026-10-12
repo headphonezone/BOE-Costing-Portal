@@ -2480,12 +2480,14 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
 
     # New rows under FREIGHT CHARGES - 2: SUPPLIER FREIGHT / BANK CHARGES /
     # OWN BANK CHARGES, each editable in the interface with a provisional
-    # (yellow) / fixed (green) status.
+    # (yellow) / fixed (green) status. A debit advice's computed bank
+    # charges land in OWN BANK CHARGES too (see
+    # supabase_client._apply_debit_advice_aggregates) rather than a row of
+    # its own -- one field, fillable by PDF parsing or manual entry.
     for row, label, field_key in [
         (6, 'SUPPLIER FREIGHT', 'supplier_freight'),
         (7, 'BANK CHARGES', 'bank_charges'),
         (8, 'OWN BANK CHARGES', 'own_bank_charges'),
-        (9, 'DEBIT ADVICE BANK CHARGES', 'debit_advice_bank_charges'),
     ]:
         jcell = cs.cell(row=row, column=10)  # column J
         jcell.value = label
@@ -2530,14 +2532,10 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     # which apportions freight, misc and insurance individually and already
     # agrees with the portal.
     #
-    # K9 (added alongside K5:K8 above) is debit_advice_bank_charges -- a Yes
-    # Bank debit advice's Bill Commission + Correspondent Bank Charges +
-    # (GST on CCY fees / 0.18), kept separate from K7/K8's operator-typed
-    # bank charges. M5/M6 are DO Charges and Exporter Inland Freight, labelled
-    # at L5/L6 (see above). All costed the same value-proportional way as
-    # everything else in this pool, matching costing.ts's expense pool
-    # exactly.
-    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9+M5+M6'
+    # M5/M6 are DO Charges and Exporter Inland Freight, labelled at L5/L6
+    # (see above). All costed the same value-proportional way as everything
+    # else in this pool, matching costing.ts's expense pool exactly.
+    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+M5+M6'
 
     for r in range(5, 11):
         cs.row_dimensions[r].height = 18

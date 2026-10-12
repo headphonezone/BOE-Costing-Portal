@@ -99,7 +99,6 @@ const variableFields: BoeVariableFields = {
   supplier_freight: 1000,
   bank_charges: 500,
   own_bank_charges: 500,
-  debit_advice_bank_charges: null,
   do_charges: null,
   exporter_inland_freight: null,
   exchange_rate_status: "provisional",
@@ -108,7 +107,6 @@ const variableFields: BoeVariableFields = {
   supplier_freight_status: "provisional",
   bank_charges_status: "provisional",
   own_bank_charges_status: "provisional",
-  debit_advice_bank_charges_status: null,
   do_charges_status: null,
   exporter_inland_freight_status: null,
 };
@@ -224,24 +222,21 @@ describe("expense pool", () => {
     expect(pool.clearance).toBe(0);
   });
 
-  it("adds debit_advice_bank_charges into the pool, separate from bank_charges", () => {
-    const withAdvice: BoeVariableFields = { ...variableFields, debit_advice_bank_charges: 4526.89 };
-    const pool = resolveActualInputs(boe, withAdvice).expenses;
-    expect(pool.debitAdviceBankCharges).toBe(4526.89);
-    expect(pool.bankCharges).toBe(500); // untouched
-    expect(pool.total).toBeCloseTo(9000 + 4526.89, 8);
-  });
-
   it("inherits the 10000 clearance default into a scenario left blank", () => {
     const noClearance: BoeVariableFields = { ...variableFields, clearing_charges: null };
     const pool = resolveScenarioInputs(boe, noClearance, scenario({ clearance_inr: null })).expenses;
     expect(pool.clearance).toBe(10000);
   });
 
-  it("inherits debit_advice_bank_charges into a scenario unconditionally", () => {
-    const withAdvice: BoeVariableFields = { ...variableFields, debit_advice_bank_charges: 4526.89 };
-    const pool = resolveScenarioInputs(boe, withAdvice, scenario()).expenses;
-    expect(pool.debitAdviceBankCharges).toBe(4526.89);
+  // A debit advice's computed charges and a manually typed figure both land
+  // in own_bank_charges -- there is no separate debitAdviceBankCharges
+  // field, so this is exactly the existing own_bank_charges test above
+  // (whichever wrote the value last is what resolveActualInputs sees).
+  it("reflects own_bank_charges whether it came from a debit advice or manual entry", () => {
+    const withAdvice: BoeVariableFields = { ...variableFields, own_bank_charges: 4526.89 };
+    const pool = resolveActualInputs(boe, withAdvice).expenses;
+    expect(pool.ownBankCharges).toBe(4526.89);
+    expect(pool.total).toBeCloseTo(8500 + 4526.89, 8); // 9000 pool minus the old 500 ownBankCharges, plus the new figure
   });
 
   it("includes do_charges and exporter_inland_freight as actual expenses", () => {

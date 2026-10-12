@@ -6,6 +6,7 @@ import { API_BASE_URL } from "@/lib/supabase";
 import { CostingTable } from "@/components/CostingTable";
 import { StatTile } from "@/components/StatTile";
 import { DebitAdviceSection } from "@/components/DebitAdviceSection";
+import { ActualFieldsEditor } from "@/components/ActualFieldsEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -136,6 +137,8 @@ export default async function BoePage({
           ))}
         </dl>
       </section>
+
+      <ActualFieldsEditor be_no={boe.be_no} boe={boe} variableFields={variableFields} />
 
       <section className="mb-10">
         <h2 className="mb-3 text-sm font-semibold">Actual costing ({items.length} items)</h2>

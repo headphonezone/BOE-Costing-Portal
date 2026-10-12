@@ -131,15 +131,14 @@ export type ExpensePool = {
   misc: number;
   supplierFreight: number;
   bankCharges: number;
-  ownBankCharges: number;
   /**
-   * Bill Commission + Correspondent Bank Charges + (GST on CCY fees / 0.18)
-   * from an uploaded debit advice -- separate from bankCharges/ownBankCharges,
-   * which stay operator-typed. Always inherited into a scenario as-is: this
-   * is a real bank transaction, not something a what-if simulates, so there
-   * is no scenario override column for it (unlike every other field here).
+   * Also where an uploaded debit advice's computed bank charges land (Bill
+   * Commission + Correspondent Bank Charges + GST-on-CCY-fees/0.18 for Yes
+   * Bank, SBI's equivalent sum for SBI) -- one field, fillable by PDF
+   * parsing or manual entry, whichever happened most recently wins. No
+   * separate debit-advice-only component.
    */
-  debitAdviceBankCharges: number;
+  ownBankCharges: number;
   /** Delivery Order charges. Entered in the Freight section of the simulation form, but counts toward Expenses, not Freight -- same as supplierFreight. */
   doCharges: number;
   /** Freight the exporter incurs inland before export. Same bucket treatment as doCharges. */
@@ -233,7 +232,6 @@ export function resolveActualInputs(
     supplierFreight: num(variableFields?.supplier_freight),
     bankCharges: num(variableFields?.bank_charges),
     ownBankCharges: num(variableFields?.own_bank_charges),
-    debitAdviceBankCharges: num(variableFields?.debit_advice_bank_charges),
     doCharges: num(variableFields?.do_charges),
     exporterInlandFreight: num(variableFields?.exporter_inland_freight),
   });
@@ -267,7 +265,6 @@ export function resolveScenarioInputs(
     supplierFreight: scenario.supplier_freight_inr ?? actual.expenses.supplierFreight,
     bankCharges: scenario.bank_charges_inr ?? actual.expenses.bankCharges,
     ownBankCharges: scenario.own_bank_charges_inr ?? actual.expenses.ownBankCharges,
-    debitAdviceBankCharges: actual.expenses.debitAdviceBankCharges,
     doCharges: scenario.do_charges_inr ?? actual.expenses.doCharges,
     exporterInlandFreight: scenario.exporter_inland_freight_inr ?? actual.expenses.exporterInlandFreight,
   });
@@ -290,7 +287,6 @@ function buildPool(parts: Omit<ExpensePool, "total">): ExpensePool {
     parts.supplierFreight +
     parts.bankCharges +
     parts.ownBankCharges +
-    parts.debitAdviceBankCharges +
     parts.doCharges +
     parts.exporterInlandFreight;
   return { ...parts, total };

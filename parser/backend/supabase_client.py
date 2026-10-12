@@ -287,7 +287,7 @@ def get_boe(be_no: str) -> dict | None:
 FIELDS = [
     "exchange_rate", "freight_charges", "clearing_charges",
     "supplier_freight", "bank_charges", "own_bank_charges",
-    "debit_advice_bank_charges", "do_charges", "exporter_inland_freight",
+    "do_charges", "exporter_inland_freight",
 ]
 
 
@@ -412,6 +412,13 @@ def _apply_debit_advice_aggregates(be_no: str) -> None:
     ('fixed') variable fields -- called after every upload and every undo, so
     the two are always rebuilt from the current set rather than patched
     incrementally.
+
+    The charges total writes to own_bank_charges -- the same field manual
+    entry on the BOE record page uses, not a separate debit-advice-only
+    bucket. One field, two ways to fill it; whichever happened most recently
+    wins, same as exchange_rate already works. (A one-time migration moved
+    every BOE's existing debit_advice_bank_charges into own_bank_charges
+    before this changed -- see sql/018_merge_debit_advice_into_own_bank_charges.sql.)
     """
     avg_rate, total_charges = _debit_advice_aggregates(be_no)
     if avg_rate is not None:
@@ -419,9 +426,9 @@ def _apply_debit_advice_aggregates(be_no: str) -> None:
     else:
         _restore_field(be_no, 'exchange_rate', None, None)
     if total_charges:
-        update_field(be_no, 'debit_advice_bank_charges', total_charges, 'fixed')
+        update_field(be_no, 'own_bank_charges', total_charges, 'fixed')
     else:
-        _restore_field(be_no, 'debit_advice_bank_charges', None, None)
+        _restore_field(be_no, 'own_bank_charges', None, None)
 
 
 def _restore_field(be_no: str, field_name: str, prev_value, prev_status) -> None:
@@ -453,11 +460,13 @@ def save_debit_advice(be_no: str, storage_path: str, file_name: str, bank: str, 
     Records the debit advice (one of possibly several on this BOE -- an
     advance and a later balance payment both land here, each possibly a
     different bank's format), snapshots whatever exchange_rate /
-    debit_advice_bank_charges happened to hold just before this insert
-    (kept for audit only -- undo no longer restores from this, see
-    undo_debit_advice), then rebuilds both fields from every debit advice
-    now on the BOE: exchange_rate becomes the average fx_rate across all of
-    them, debit_advice_bank_charges the sum of all their charges.
+    own_bank_charges happened to hold just before this insert (kept for
+    audit only -- undo no longer restores from this, see undo_debit_advice),
+    then rebuilds both fields from every debit advice now on the BOE:
+    exchange_rate becomes the average fx_rate across all of them,
+    own_bank_charges the sum of all their charges (see
+    _apply_debit_advice_aggregates for why own_bank_charges and not a
+    separate field).
     """
     existing = _client.table('boe_variable_fields').select('*').eq('be_no', be_no).limit(1).execute().data
     row = existing[0] if existing else {}
@@ -486,8 +495,11 @@ def save_debit_advice(be_no: str, storage_path: str, file_name: str, bank: str, 
         'overridden': overridden,
         'prev_exchange_rate': row.get('exchange_rate'),
         'prev_exchange_rate_status': row.get('exchange_rate_status'),
-        'prev_debit_advice_bank_charges': row.get('debit_advice_bank_charges'),
-        'prev_debit_advice_bank_charges_status': row.get('debit_advice_bank_charges_status'),
+        # Column name predates the own_bank_charges merge; still means
+        # "whatever this BOE's bank-charges field held immediately before
+        # this insert", just that field is own_bank_charges now.
+        'prev_debit_advice_bank_charges': row.get('own_bank_charges'),
+        'prev_debit_advice_bank_charges_status': row.get('own_bank_charges_status'),
     }
     created = _client.table('boe_debit_advices').insert(advice_row).execute().data[0]
 
@@ -500,9 +512,13 @@ def undo_debit_advice(be_no: str, advice_id: int) -> bool:
     """
     Reverses one debit advice upload -- which may be one of several on this
     BOE, and not necessarily the most recent -- by removing it and rebuilding
-    exchange_rate / debit_advice_bank_charges from whichever advices remain.
-    With none left, both fall back to no confirmed value at all, same as if
-    no debit advice had ever been uploaded for this BOE. Also trashes the
+    exchange_rate / own_bank_charges from whichever advices remain. With none
+    left, both fall back to no confirmed value at all, same as if no debit
+    advice had ever been uploaded for this BOE -- including overwriting
+    own_bank_charges back to empty even if it held an unrelated manually
+    typed value before any debit advice touched it; the two share one field,
+    so there is no way to distinguish "no debit advice left" from "an
+    operator's number that happens to coincide". Also trashes the
     Drive file (recoverable from the Shared Drive's trash, see
     drive_client.trash_document) and removes the boe_documents index row.
     Returns False if no such advice exists for this BOE.

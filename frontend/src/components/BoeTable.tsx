@@ -300,6 +300,9 @@ function Input({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
+      // A number input changes value on mouse-wheel scroll while focused;
+      // blurring on wheel hands the scroll back to the page instead.
+      onWheel={type === "number" ? (e) => e.currentTarget.blur() : undefined}
       className="w-full min-w-0 rounded border border-line bg-surface px-2 py-1 text-xs font-normal normal-case tracking-normal text-foreground outline-none placeholder:text-muted focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
     />
   );

@@ -231,6 +231,9 @@ function CellInput({
         const parsed = Number(raw);
         if (Number.isFinite(parsed)) onChange(parsed);
       }}
+      // See NumberField.tsx's onWheel for why: scrolling the page must not
+      // silently edit a focused cost figure.
+      onWheel={(e) => e.currentTarget.blur()}
       className="tnum w-20 rounded border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
     />
   );

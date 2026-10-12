@@ -2495,17 +2495,23 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         kcell.value = _var_value(field_key, 0)
         _st(kcell, font=BLK_BOLD, fill=_status_fill(field_key), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
-    # DO Charges and Exporter Inland Freight: value only, no label cell --
-    # K5/K6 (where a label would normally precede the value, J->K) are
-    # already misc charges and supplier freight, so there is nowhere to put
-    # one without overwriting those. Entered in the simulation form's
-    # Freight section, but counted as general expenses (I9), not freight
-    # (I5) -- same bucket as supplier_freight above.
-    cs['L5'].value = _var_value('do_charges', 0)
-    _st(cs['L5'], font=BLK_BOLD, fill=_status_fill('do_charges'), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
+    # DO Charges and Exporter Inland Freight: label at L, value at M -- K5/K6
+    # (where a label would normally precede the value, J->K) are already
+    # misc charges and supplier freight, so the J->K pattern moves one pair
+    # of columns right instead. Entered in the simulation form's Freight
+    # section, but counted as general expenses (I9), not freight (I5) --
+    # same bucket as supplier_freight above.
+    for row, label, field_key in [
+        (5, 'DO CHARGES', 'do_charges'),
+        (6, 'EXPORTER INLAND FREIGHT', 'exporter_inland_freight'),
+    ]:
+        lcell = cs.cell(row=row, column=12)  # column L
+        lcell.value = label
+        _st(lcell, font=WHT_BOLD, fill=NAVY_FILL, align=CENTER, border=_ab())
 
-    cs['L6'].value = _var_value('exporter_inland_freight', 0)
-    _st(cs['L6'], font=BLK_BOLD, fill=_status_fill('exporter_inland_freight'), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
+        mcell = cs.cell(row=row, column=13)  # column M
+        mcell.value = _var_value(field_key, 0)
+        _st(mcell, font=BLK_BOLD, fill=_status_fill(field_key), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
     # FIX: the template computes the apportioned expense pool as
     # I9 = I8+I7+I6+I5 -- freight, insurance, clearance, others -- which
@@ -2527,11 +2533,11 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     # K9 (added alongside K5:K8 above) is debit_advice_bank_charges -- a Yes
     # Bank debit advice's Bill Commission + Correspondent Bank Charges +
     # (GST on CCY fees / 0.18), kept separate from K7/K8's operator-typed
-    # bank charges. L5/L6 are DO Charges and Exporter Inland Freight (see
-    # above -- value-only, no label cell, since K5/K6 already hold other
-    # values). All costed the same value-proportional way as everything
-    # else in this pool, matching costing.ts's expense pool exactly.
-    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9+L5+L6'
+    # bank charges. M5/M6 are DO Charges and Exporter Inland Freight, labelled
+    # at L5/L6 (see above). All costed the same value-proportional way as
+    # everything else in this pool, matching costing.ts's expense pool
+    # exactly.
+    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9+M5+M6'
 
     for r in range(5, 11):
         cs.row_dimensions[r].height = 18

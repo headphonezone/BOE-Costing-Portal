@@ -71,6 +71,12 @@ export function NumberField({
           disabled={disabled}
           value={text}
           onChange={(e) => commit(e.target.value)}
+          // A number input changes value on mouse-wheel scroll while
+          // focused -- useful on nothing here, and a real hazard right
+          // after clicking a field: the next scroll of the page silently
+          // edits a cost figure. Blurring on wheel hands the scroll back to
+          // the page instead of the input.
+          onWheel={(e) => e.currentTarget.blur()}
           placeholder={inherited != null ? String(round(inherited)) : "0"}
           className="tnum w-full bg-transparent px-2.5 py-2 text-sm outline-none disabled:opacity-50"
         />

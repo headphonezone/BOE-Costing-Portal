@@ -170,24 +170,6 @@ export function ScenarioControls({
           onChange={(v) => onChange({ freight_is_actual: v })}
           id="freight-actual"
         />
-
-        {/* Entered here for convenience alongside freight, but counted as
-            general expenses (Expenses column), not freight -- same bucket
-            treatment as Supplier freight below. */}
-        <NumberField
-          label="DO charges"
-          value={scenario.do_charges_inr}
-          inherited={actualInputs.expenses.doCharges}
-          onChange={(v) => onChange({ do_charges_inr: v })}
-          prefix="₹"
-        />
-        <NumberField
-          label="Exporter inland freight"
-          value={scenario.exporter_inland_freight_inr}
-          inherited={actualInputs.expenses.exporterInlandFreight}
-          onChange={(v) => onChange({ exporter_inland_freight_inr: v })}
-          prefix="₹"
-        />
       </Group>
 
       {/* ---------------------------------------------------------------- */}
@@ -213,7 +195,7 @@ export function ScenarioControls({
 
       {/* ---------------------------------------------------------------- */}
       <Group title="Other expenses">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-1.5">
           <NumberField
             label="Insurance"
             value={scenario.insurance_inr}
@@ -255,6 +237,27 @@ export function ScenarioControls({
             inherited={actualInputs.expenses.otherCharges}
             onChange={(v) => onChange({ other_charges_inr: v })}
             prefix="₹"
+          />
+          {/* Own distinct boxes, not folded into "Others" -- counted as
+              general expenses the same as every box in this grid, just kept
+              individually visible rather than summed away silently. No
+              manual "Actual" tick like freight/clearance: typing a value
+              here marks it actual immediately. */}
+          <NumberField
+            label="DO charges"
+            value={scenario.do_charges_inr}
+            inherited={actualInputs.expenses.doCharges}
+            onChange={(v) => onChange({ do_charges_inr: v })}
+            prefix="₹"
+            autoActualStatus
+          />
+          <NumberField
+            label="Exporter inland freight"
+            value={scenario.exporter_inland_freight_inr}
+            inherited={actualInputs.expenses.exporterInlandFreight}
+            onChange={(v) => onChange({ exporter_inland_freight_inr: v })}
+            prefix="₹"
+            autoActualStatus
           />
           <NumberField
             label="Margin"

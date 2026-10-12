@@ -12,7 +12,6 @@ export function NumberField({
   value,
   inherited,
   onChange,
-  onCommit,
   prefix,
   suffix,
   hint,
@@ -23,14 +22,6 @@ export function NumberField({
   value: number | null;
   inherited?: number | null;
   onChange: (next: number | null) => void;
-  /**
-   * Fires once, with the parsed value, when the field loses focus --
-   * separate from onChange (which fires on every keystroke) so a consumer
-   * that wants to save over the network (one request, not one per
-   * character) has a natural point to do it. Unused by most callers, which
-   * only need onChange.
-   */
-  onCommit?: (next: number | null) => void;
   prefix?: string;
   suffix?: string;
   hint?: string;
@@ -80,16 +71,6 @@ export function NumberField({
           disabled={disabled}
           value={text}
           onChange={(e) => commit(e.target.value)}
-          onBlur={() => {
-            if (!onCommit) return;
-            const trimmed = text.trim();
-            if (trimmed === "") {
-              onCommit(null);
-              return;
-            }
-            const parsed = Number(trimmed);
-            if (Number.isFinite(parsed)) onCommit(parsed);
-          }}
           // A number input changes value on mouse-wheel scroll while
           // focused -- useful on nothing here, and a real hazard right
           // after clicking a field: the next scroll of the page silently

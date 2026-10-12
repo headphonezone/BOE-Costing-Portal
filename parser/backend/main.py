@@ -363,16 +363,8 @@ class FieldUpdate(BaseModel):
     status: str  # 'provisional' | 'fixed'
 
 
-@app.patch("/boe/{be_no}/field")
+@app.patch("/boe/{be_no}/field", dependencies=[Depends(require_admin)])
 def update_field(be_no: str, update: FieldUpdate):
-    """
-    Manually sets one actual-costing field (the record page's "Confirm
-    actual figures" editor). Opened up from admin-gated to match every other
-    mutating endpoint added this round (/boe/upload, the debit-advice
-    endpoints) -- the browser has no PARSER_ADMIN_TOKEN to offer it, and
-    nothing has ever called this with the token since there was no UI for it
-    until now.
-    """
     if update.status not in ('provisional', 'fixed'):
         raise HTTPException(422, "status must be 'provisional' or 'fixed'")
     try:

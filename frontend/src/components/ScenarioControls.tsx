@@ -170,6 +170,24 @@ export function ScenarioControls({
           onChange={(v) => onChange({ freight_is_actual: v })}
           id="freight-actual"
         />
+
+        {/* Entered here for convenience alongside freight, but counted as
+            general expenses (Expenses column), not freight -- same bucket
+            treatment as Supplier freight below. */}
+        <NumberField
+          label="DO charges"
+          value={scenario.do_charges_inr}
+          inherited={actualInputs.expenses.doCharges}
+          onChange={(v) => onChange({ do_charges_inr: v })}
+          prefix="₹"
+        />
+        <NumberField
+          label="Exporter inland freight"
+          value={scenario.exporter_inland_freight_inr}
+          inherited={actualInputs.expenses.exporterInlandFreight}
+          onChange={(v) => onChange({ exporter_inland_freight_inr: v })}
+          prefix="₹"
+        />
       </Group>
 
       {/* ---------------------------------------------------------------- */}

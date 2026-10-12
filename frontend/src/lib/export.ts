@@ -29,6 +29,8 @@ type SimulationPayload = {
   bank_charges: number;
   own_bank_charges: number;
   debit_advice_bank_charges: number;
+  do_charges: number;
+  exporter_inland_freight: number;
   items: Array<{
     invsno: number;
     itemsn: number;
@@ -60,6 +62,8 @@ export function toSimulationPayload(result: CostingResult): SimulationPayload {
     bank_charges: e.bankCharges,
     own_bank_charges: e.ownBankCharges,
     debit_advice_bank_charges: e.debitAdviceBankCharges,
+    do_charges: e.doCharges,
+    exporter_inland_freight: e.exporterInlandFreight,
     // Rows are sent in display order. The workbook numbers them 1..n from
     // this order, because D-DETAILS places duty by that number and C-SHEET
     // reads it back positionally -- a gap would shift every row below it.

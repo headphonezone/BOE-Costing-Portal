@@ -2495,6 +2495,24 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
         kcell.value = _var_value(field_key, 0)
         _st(kcell, font=BLK_BOLD, fill=_status_fill(field_key), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
 
+    # DO Charges and Exporter Inland Freight share row 10 with each other --
+    # the only fully free row left in this header block: rows 5-9 are already
+    # the fields above, and row 11 is the item table's own header row
+    # (J11/K11 are its "+2% MARGIN"/"TOTAL COST" columns). Entered in the
+    # simulation form's Freight section, but counted as general expenses
+    # (I9), not freight (I5) -- same bucket as supplier_freight above.
+    for col_label, col_value, label, field_key in [
+        (10, 11, 'DO CHARGES', 'do_charges'),                        # J10 / K10
+        (12, 13, 'EXPORTER INLAND FREIGHT', 'exporter_inland_freight'),  # L10 / M10
+    ]:
+        lcell = cs.cell(row=10, column=col_label)
+        lcell.value = label
+        _st(lcell, font=WHT_BOLD, fill=NAVY_FILL, align=CENTER, border=_ab())
+
+        vcell = cs.cell(row=10, column=col_value)
+        vcell.value = _var_value(field_key, 0)
+        _st(vcell, font=BLK_BOLD, fill=_status_fill(field_key), align=RIGHT, border=_ab(), num_fmt=NUM_FMT)
+
     # FIX: the template computes the apportioned expense pool as
     # I9 = I8+I7+I6+I5 -- freight, insurance, clearance, others -- which
     # silently drops the four costs that live in column K: misc charges (K5,
@@ -2515,9 +2533,11 @@ def _fill_c_sheet(wb, header, meta, items, duties, assess_values, variable_field
     # K9 (added alongside K5:K8 above) is debit_advice_bank_charges -- a Yes
     # Bank debit advice's Bill Commission + Correspondent Bank Charges +
     # (GST on CCY fees / 0.18), kept separate from K7/K8's operator-typed
-    # bank charges. Costed the same value-proportional way as everything
-    # else in this pool, matching costing.ts's expense pool exactly.
-    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9'
+    # bank charges. K10 and M10 are DO Charges and Exporter Inland Freight
+    # (row 10, see above). All costed the same value-proportional way as
+    # everything else in this pool, matching costing.ts's expense pool
+    # exactly.
+    cs['I9'].value = '=I5+I6+I7+I8+K5+K6+K7+K8+K9+K10+M10'
 
     for r in range(5, 11):
         cs.row_dimensions[r].height = 18

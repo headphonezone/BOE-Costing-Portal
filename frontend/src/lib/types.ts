@@ -72,7 +72,7 @@ export type BoeDocument = {
   uploaded_at: string;
 };
 
-/** The seven provisional/fixed cost fields the existing dashboard maintains. */
+/** The nine provisional/fixed cost fields the existing dashboard maintains. */
 export type BoeVariableFields = {
   be_no: string;
   updated_at: string;
@@ -84,6 +84,8 @@ export type BoeVariableFields = {
   own_bank_charges: number | null;
   /** Bill Commission + Correspondent Bank Charges + (GST on CCY fees / 0.18) from a debit advice. Separate from bank_charges/own_bank_charges. */
   debit_advice_bank_charges: number | null;
+  do_charges: number | null;
+  exporter_inland_freight: number | null;
   exchange_rate_status: FieldStatus | null;
   freight_charges_status: FieldStatus | null;
   clearing_charges_status: FieldStatus | null;
@@ -91,6 +93,8 @@ export type BoeVariableFields = {
   bank_charges_status: FieldStatus | null;
   own_bank_charges_status: FieldStatus | null;
   debit_advice_bank_charges_status: FieldStatus | null;
+  do_charges_status: FieldStatus | null;
+  exporter_inland_freight_status: FieldStatus | null;
 };
 
 export type FieldStatus = "provisional" | "fixed";
@@ -182,6 +186,8 @@ export type Scenario = {
   supplier_freight_inr: number | null;
   bank_charges_inr: number | null;
   own_bank_charges_inr: number | null;
+  do_charges_inr: number | null;
+  exporter_inland_freight_inr: number | null;
   margin_pct: number;
   created_by: string | null;
   created_at: string;

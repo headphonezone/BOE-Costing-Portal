@@ -402,6 +402,8 @@ class SimulationExport(BaseModel):
     bank_charges: float = 0
     own_bank_charges: float = 0
     debit_advice_bank_charges: float = 0
+    do_charges: float = 0
+    exporter_inland_freight: float = 0
     items: list[SimulationItem] = []
 
 
@@ -464,6 +466,8 @@ def download_simulation_excel(be_no: str, sim: SimulationExport):
         ('bank_charges', sim.bank_charges),
         ('own_bank_charges', sim.own_bank_charges),
         ('debit_advice_bank_charges', sim.debit_advice_bank_charges),
+        ('do_charges', sim.do_charges),
+        ('exporter_inland_freight', sim.exporter_inland_freight),
     )}
 
     # bcd_forgone is deliberately empty: costing.ts has already resolved each

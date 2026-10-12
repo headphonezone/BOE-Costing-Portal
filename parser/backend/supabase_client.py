@@ -287,7 +287,7 @@ def get_boe(be_no: str) -> dict | None:
 FIELDS = [
     "exchange_rate", "freight_charges", "clearing_charges",
     "supplier_freight", "bank_charges", "own_bank_charges",
-    "debit_advice_bank_charges",
+    "debit_advice_bank_charges", "do_charges", "exporter_inland_freight",
 ]
 
 

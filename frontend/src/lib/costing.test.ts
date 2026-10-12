@@ -100,6 +100,8 @@ const variableFields: BoeVariableFields = {
   bank_charges: 500,
   own_bank_charges: 500,
   debit_advice_bank_charges: null,
+  do_charges: null,
+  exporter_inland_freight: null,
   exchange_rate_status: "provisional",
   freight_charges_status: "provisional",
   clearing_charges_status: "fixed",
@@ -107,6 +109,8 @@ const variableFields: BoeVariableFields = {
   bank_charges_status: "provisional",
   own_bank_charges_status: "provisional",
   debit_advice_bank_charges_status: null,
+  do_charges_status: null,
+  exporter_inland_freight_status: null,
 };
 
 function scenario(overrides: Partial<Scenario> = {}): Scenario {
@@ -131,6 +135,8 @@ function scenario(overrides: Partial<Scenario> = {}): Scenario {
     supplier_freight_inr: null,
     bank_charges_inr: null,
     own_bank_charges_inr: null,
+    do_charges_inr: null,
+    exporter_inland_freight_inr: null,
     margin_pct: 2,
     created_by: null,
     created_at: "",
@@ -229,6 +235,37 @@ describe("expense pool", () => {
     const withAdvice: BoeVariableFields = { ...variableFields, debit_advice_bank_charges: 4526.89 };
     const pool = resolveScenarioInputs(boe, withAdvice, scenario()).expenses;
     expect(pool.debitAdviceBankCharges).toBe(4526.89);
+  });
+
+  it("includes do_charges and exporter_inland_freight as actual expenses", () => {
+    const withCharges: BoeVariableFields = {
+      ...variableFields,
+      do_charges: 1500,
+      exporter_inland_freight: 2500,
+    };
+    const pool = resolveActualInputs(boe, withCharges).expenses;
+    expect(pool.doCharges).toBe(1500);
+    expect(pool.exporterInlandFreight).toBe(2500);
+    expect(pool.total).toBe(9000 + 1500 + 2500);
+  });
+
+  it("lets a scenario override do_charges / exporter_inland_freight, inheriting otherwise", () => {
+    const withCharges: BoeVariableFields = {
+      ...variableFields,
+      do_charges: 1500,
+      exporter_inland_freight: 2500,
+    };
+    const inherited = resolveScenarioInputs(boe, withCharges, scenario()).expenses;
+    expect(inherited.doCharges).toBe(1500);
+    expect(inherited.exporterInlandFreight).toBe(2500);
+
+    const overridden = resolveScenarioInputs(
+      boe,
+      withCharges,
+      scenario({ do_charges_inr: 999, exporter_inland_freight_inr: 0 })
+    ).expenses;
+    expect(overridden.doCharges).toBe(999);
+    expect(overridden.exporterInlandFreight).toBe(0);
   });
 
   it("apportions the whole pool and nothing more", () => {

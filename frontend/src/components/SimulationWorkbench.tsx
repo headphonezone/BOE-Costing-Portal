@@ -578,20 +578,26 @@ export function SimulationWorkbench({
             )}
 
             <div className="min-w-0 space-y-8">
-              <section>
-                <h2 className="mb-3 text-sm font-semibold">Item adjustments</h2>
-                {activeResult && (
-                  <ScenarioItemsTable
-                    items={items}
-                    overrides={overrides}
-                    result={activeResult}
-                    baseline={baseline}
-                    onChange={patchItem}
-                    onReset={resetItem}
-                    onDuplicate={duplicateItem}
-                  />
-                )}
-              </section>
+              {/* Hidden rather than merely disabled while not editing, same
+                  as ScenarioControls alongside it: an input that still
+                  looks editable but silently does nothing is worse than one
+                  that is not there until Edit is clicked. */}
+              {editing && (
+                <section>
+                  <h2 className="mb-3 text-sm font-semibold">Item adjustments</h2>
+                  {activeResult && (
+                    <ScenarioItemsTable
+                      items={items}
+                      overrides={overrides}
+                      result={activeResult}
+                      baseline={baseline}
+                      onChange={patchItem}
+                      onReset={resetItem}
+                      onDuplicate={duplicateItem}
+                    />
+                  )}
+                </section>
+              )}
 
               <section>
                 <h2 className="mb-3 text-sm font-semibold">Simulated costing</h2>

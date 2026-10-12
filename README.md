@@ -35,6 +35,7 @@ BOE-Costing-Portal/
 ├── sql/              database schema, run in numeric order
 ├── samples/          drop a BOE PDF here to test with (gitignored)
 └── scripts/          dev.ps1 / dev.sh — start both services
+    └── tally_link/       BOE line ↔ Tally stock item lookup (sql/015)
 ```
 
 ---

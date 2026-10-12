@@ -191,6 +191,27 @@ export function ScenarioControls({
       </Group>
 
       {/* ---------------------------------------------------------------- */}
+      {/* Its own group rather than a cell in the grid below, so it can carry
+          the same provisional/actual tick as freight: with nothing entered on
+          the BOE it inherits the 10,000 default, an estimate until the
+          clearing agent's bill arrives. */}
+      <Group title="Clearance">
+        <NumberField
+          label="Clearance"
+          value={scenario.clearance_inr}
+          inherited={actualInputs.expenses.clearance}
+          onChange={(v) => onChange({ clearance_inr: v })}
+          prefix="₹"
+        />
+        <ActualTick
+          checked={scenario.clearance_is_actual ?? false}
+          onChange={(v) => onChange({ clearance_is_actual: v })}
+          id="clearance-actual"
+          provisionalLabel="Provisional — estimate"
+        />
+      </Group>
+
+      {/* ---------------------------------------------------------------- */}
       <Group title="Other expenses">
         <div className="grid grid-cols-2 gap-2">
           <NumberField
@@ -198,13 +219,6 @@ export function ScenarioControls({
             value={scenario.insurance_inr}
             inherited={actualInputs.expenses.insurance}
             onChange={(v) => onChange({ insurance_inr: v })}
-            prefix="₹"
-          />
-          <NumberField
-            label="Clearance"
-            value={scenario.clearance_inr}
-            inherited={actualInputs.expenses.clearance}
-            onChange={(v) => onChange({ clearance_inr: v })}
             prefix="₹"
           />
           <NumberField
@@ -263,10 +277,13 @@ function ActualTick({
   checked,
   onChange,
   id,
+  provisionalLabel = "Provisional — as per BOE",
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   id: string;
+  /** Clearance is not on the BOE at all, so "as per BOE" would be untrue of it. */
+  provisionalLabel?: string;
 }) {
   return (
     <label
@@ -284,7 +301,7 @@ function ActualTick({
         onChange={(e) => onChange(e.target.checked)}
         className="size-3.5 accent-emerald-600"
       />
-      {checked ? "Actual cost" : "Provisional — as per BOE"}
+      {checked ? "Actual cost" : provisionalLabel}
     </label>
   );
 }

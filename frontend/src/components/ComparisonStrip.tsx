@@ -35,8 +35,8 @@ export function ComparisonStrip({
       sub: `${delta(totals.landedTotal)} vs actual`,
       diff: totals.landedTotal,
     },
-    // Exchange rate and freight are the two figures that settle later, so each
-    // carries whether it is still the BOE's number or a confirmed actual.
+    // Exchange rate, freight and clearance are the figures that settle later,
+    // so each carries whether it is still an estimate or a confirmed actual.
     {
       label: "Exchange rate",
       value: inr(variant.inputs.exchangeRate),
@@ -52,6 +52,15 @@ export function ComparisonStrip({
       sub: `${delta(totals.freightShare)} vs actual`,
       diff: totals.freightShare,
       status: scenario.freight_is_actual ? "actual" : "provisional",
+    },
+    {
+      label: "Clearance",
+      value: inr(variant.inputs.expenses.clearance),
+      sub:
+        variant.inputs.expenses.clearance === baseline.inputs.expenses.clearance
+          ? "same as actual"
+          : `was ${inr(baseline.inputs.expenses.clearance)}`,
+      status: scenario.clearance_is_actual ? "actual" : "provisional",
     },
     {
       label: "Duty in cost",

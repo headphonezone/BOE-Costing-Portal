@@ -148,18 +148,27 @@ def _parse_yes_bank_debit_advice(text: str) -> dict:
     caller decides whether a missing bill_amount or fx_rate means the upload
     can't proceed.
     """
+    # Yes Bank's older advice template prints its own placeholder labels on
+    # the page, in the same black text as everything else: "USD L-CCY_
+    # 3,725.00 _", "(USD _/INR _) : 95.3 EXRATE_", "INR _ 750.00 Dr. R_".
+    # So the gap between a currency code and its number may hold anything
+    # but a digit -- never a newline, so a label can't borrow the next
+    # line's figure. The newer template has no such tokens and the gap is
+    # just whitespace.
+    gap = r'[^\d\n]*?'
+
     bill_amount, bill_currency = None, None
-    m = re.search(r'BILL\s+AMOUNT\s*:?\s*([A-Z]{3})\s+([\d,]+\.\d{2})', text, re.IGNORECASE)
+    m = re.search(rf'BILL\s+AMOUNT\s*:?\s*([A-Z]{{3}})\b{gap}([\d,]+\.\d{{2}})', text, re.IGNORECASE)
     if m:
         bill_currency, bill_amount = m.group(1).upper(), float(m.group(2).replace(',', ''))
 
     fx_rate = None
-    m = re.search(r'FX\s+RATE\s*\([A-Z]{3}\s*/\s*[A-Z]{3}\s*\)\s*:?\s*([\d.]+)', text, re.IGNORECASE)
+    m = re.search(r'FX\s+RATE\s*\([^)\n]*\)\s*:?\s*([\d.]+)', text, re.IGNORECASE)
     if m:
         fx_rate = float(m.group(1))
 
     def _line_amount(label_pat: str) -> float | None:
-        m = re.search(rf'{label_pat}\s+[A-Z]{{3}}\s+([\d,]+\.\d{{2}})', text, re.IGNORECASE)
+        m = re.search(rf'{label_pat}\s+[A-Z]{{3}}\b{gap}([\d,]+\.\d{{2}})', text, re.IGNORECASE)
         return float(m.group(1).replace(',', '')) if m else None
 
     bill_commission = _line_amount(r'BILL\s+COMMISSION')

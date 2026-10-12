@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { StatusChip } from "./StatTile";
 
 /**
  * A numeric input where empty means "inherit the actual value" rather than
@@ -18,7 +17,6 @@ export function NumberField({
   hint,
   step = "any",
   disabled,
-  autoActualStatus,
 }: {
   label: string;
   value: number | null;
@@ -29,15 +27,6 @@ export function NumberField({
   hint?: string;
   step?: string;
   disabled?: boolean;
-  /**
-   * No separate "Actual" checkbox for this field -- typing a value marks it
-   * actual immediately (a green chip appears), clearing it goes back to
-   * provisional/inherited. For a field with no real "estimate until
-   * confirmed" step, unlike freight/clearance which keep a manual tick
-   * because an operator may want to show a number without yet vouching for
-   * it.
-   */
-  autoActualStatus?: boolean;
 }) {
   // Kept as a string so a half-typed "1." or "-" survives a re-render.
   const [text, setText] = useState(value === null ? "" : String(value));
@@ -69,18 +58,8 @@ export function NumberField({
     <label className="block">
       <span className="flex items-baseline justify-between text-[11px] font-medium uppercase tracking-wide text-muted">
         {label}
-        {autoActualStatus ? (
-          // No "provisional" chip when empty: StatusChip's provisional label
-          // is "As per BOE", which would be untrue of a field the BOE never
-          // carries at all -- so blank just shows nothing, same as any other
-          // untouched field, and the chip only appears once there is
-          // something to actually call actual.
-          !isInherited && <StatusChip status="actual" />
-        ) : (
-          isInherited &&
-          inherited != null && (
-            <span className="font-normal normal-case tracking-normal">inherited</span>
-          )
+        {isInherited && inherited != null && (
+          <span className="font-normal normal-case tracking-normal">inherited</span>
         )}
       </span>
       <span className="mt-1 flex items-center rounded-lg border border-line bg-surface focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20">

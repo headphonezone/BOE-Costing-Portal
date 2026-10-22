@@ -79,20 +79,16 @@ export function ScenarioControls({
 
       {/* ---------------------------------------------------------------- */}
       <Group title="Exchange rate">
+        {/* No separate tick like Freight/Clearance keep: typing a rate here
+            is itself the confirmation, so it marks exchange_rate_is_actual
+            immediately rather than waiting for a second click. Clearing the
+            box (back to inherited) un-marks it the same way. */}
         <NumberField
           label="INR per USD"
           value={scenario.exchange_rate}
           inherited={actualInputs.exchangeRate}
-          onChange={(v) => onChange({ exchange_rate: v })}
+          onChange={(v) => onChange({ exchange_rate: v, exchange_rate_is_actual: v !== null })}
           prefix="₹"
-        />
-        {/* `?? false` because a database that has not had migration 002
-            applied yet returns no such column, and an undefined `checked`
-            would flip the input to uncontrolled mid-render. */}
-        <ActualTick
-          checked={scenario.exchange_rate_is_actual ?? false}
-          onChange={(v) => onChange({ exchange_rate_is_actual: v })}
-          id="exchange-rate-actual"
         />
       </Group>
 

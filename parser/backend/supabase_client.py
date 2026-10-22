@@ -429,6 +429,29 @@ def _apply_debit_advice_aggregates(be_no: str) -> None:
         update_field(be_no, 'own_bank_charges', total_charges, 'fixed')
     else:
         _restore_field(be_no, 'own_bank_charges', None, None)
+    _sync_final_scenarios_exchange_rate(be_no, avg_rate is not None)
+
+
+def _sync_final_scenarios_exchange_rate(be_no: str, confirmed: bool) -> None:
+    """
+    A "Final" simulation is meant to track the real costing, so it follows
+    the actual exchange rate automatically rather than needing anyone to
+    re-type it: cleared back to inherit (null) and marked actual once a
+    debit advice confirms the rate, un-marked again if every debit advice on
+    the BOE is later undone and the actual reverts to unconfirmed. Matches
+    scenario name by substring, case-insensitive ("Simulation Final",
+    "SIMULATION FINAL", "Final", ...) -- scenarios not named like that are
+    untouched, so an in-progress draft never gets silently overwritten.
+    """
+    scenarios = _client.table('boe_scenarios').select('id,name').eq('be_no', be_no).execute().data
+    final_ids = [s['id'] for s in scenarios if 'final' in (s.get('name') or '').lower()]
+    if not final_ids:
+        return
+    patch = {'exchange_rate_is_actual': confirmed}
+    if confirmed:
+        patch['exchange_rate'] = None
+    for sid in final_ids:
+        _client.table('boe_scenarios').update(patch).eq('id', sid).execute()
 
 
 def _restore_field(be_no: str, field_name: str, prev_value, prev_status) -> None:
